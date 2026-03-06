@@ -220,7 +220,7 @@ impl SimWorld {
 
     /// Step car vehicles only. Motorbikes handled by step_motorbikes_sublane.
     fn step_vehicles(&mut self, dt: f64, spatial: &SpatialIndex, snapshot: &AgentSnapshot) {
-        let agents: Vec<(Entity, RoadPosition, f64, IdmParams, [f64; 2])> = self
+        let agents: Vec<(Entity, RoadPosition, f64, f64, IdmParams, [f64; 2])> = self
             .world
             .query_mut::<(
                 Entity,
@@ -232,11 +232,11 @@ impl SimWorld {
             )>()
             .into_iter()
             .filter(|(_, _, _, _, vt, _)| **vt == VehicleType::Car)
-            .map(|(e, rp, kin, idm, _, pos)| (e, *rp, kin.speed, *idm, [pos.x, pos.y]))
+            .map(|(e, rp, kin, idm, _, pos)| (e, *rp, kin.speed, kin.heading, *idm, [pos.x, pos.y]))
             .collect();
 
         let mut edge_agents: HashMap<u32, Vec<(Entity, f64)>> = HashMap::new();
-        for (entity, rp, _, _, _) in &agents {
+        for (entity, rp, _, _, _, _) in &agents {
             edge_agents
                 .entry(rp.edge_index)
                 .or_default()
@@ -248,12 +248,12 @@ impl SimWorld {
 
         let speed_map: HashMap<Entity, f64> = agents
             .iter()
-            .map(|(e, _, speed, _, _)| (*e, *speed))
+            .map(|(e, _, speed, _, _, _)| (*e, *speed))
             .collect();
 
         let mut updates: Vec<(Entity, f64, f64, bool)> = Vec::with_capacity(agents.len());
 
-        for (entity, rp, speed, idm_params, agent_pos) in &agents {
+        for (entity, rp, speed, heading, idm_params, agent_pos) in &agents {
             let at_red = self.check_signal_red(rp);
 
             let (mut gap, mut delta_v) = if at_red {
@@ -262,22 +262,26 @@ impl SimWorld {
                 Self::find_leader_static(*entity, rp, &edge_agents, &speed_map, *speed)
             };
 
-            // Cross-type avoidance: brake for pedestrians ahead within 15m.
-            let nearby = spatial.nearest_within_radius(*agent_pos, 15.0);
+            // Cross-type avoidance: slow down for pedestrians crossing ahead.
+            // Only trigger for pedestrians within the road corridor (lateral < 2.0m)
+            // and close ahead (2-8m). Use pedestrian's actual speed as delta_v
+            // so the car slows rather than fully stopping.
+            let nearby = spatial.nearest_within_radius(*agent_pos, 8.0);
             for neighbor in &nearby {
-                // Skip self by position proximity.
                 let dx = neighbor.pos[0] - agent_pos[0];
                 let dy = neighbor.pos[1] - agent_pos[1];
-                let dist = (dx * dx + dy * dy).sqrt();
-                if dist < 0.01 {
+                let longitudinal = dx * heading.cos() + dy * heading.sin();
+                let lateral = (-dx * heading.sin() + dy * heading.cos()).abs();
+                if longitudinal < 2.0 || lateral > 2.0 {
                     continue;
                 }
                 if let Some(vt) = snapshot.vehicle_type(neighbor.id)
                     && vt == VehicleType::Pedestrian
-                    && dist < gap
+                    && longitudinal < gap
                 {
-                    gap = dist;
-                    delta_v = *speed; // ped speed ~0 relative to car
+                    let ped_speed = snapshot.speed(neighbor.id).unwrap_or(0.0);
+                    gap = longitudinal;
+                    delta_v = (*speed - ped_speed).max(0.0);
                 }
             }
 
@@ -395,14 +399,16 @@ impl SimWorld {
                     speed: n_speed,
                 });
 
-                // Cross-type: brake for pedestrians within 3m ahead.
+                // Cross-type: slow for pedestrians within 3m ahead and within 1.0m laterally.
+                let lat_dist = (-dx * heading.sin() + dy * heading.cos()).abs();
                 if n_vtype == VehicleType::Pedestrian
-                    && longitudinal > 0.0
+                    && longitudinal > 0.5
                     && longitudinal < 3.0
+                    && lat_dist < 1.0
                     && longitudinal < idm_gap
                 {
                     idm_gap = longitudinal;
-                    idm_delta_v = *speed; // treat ped as stopped
+                    idm_delta_v = (*speed - n_speed).max(0.0);
                 }
 
                 // Longitudinal IDM leader: nearest ahead on similar lateral band.
@@ -509,7 +515,27 @@ impl SimWorld {
             }
 
             let target_node = NodeIndex::new(path[*current_step] as usize);
-            let target_pos = self.road_graph.inner()[target_node].pos;
+            let raw_target = self.road_graph.inner()[target_node].pos;
+
+            // Offset pedestrian target to road edge (sidewalk) so they don't walk
+            // along the road centerline. Compute perpendicular from previous node.
+            let target_pos = if *current_step > 0 {
+                let prev_node = NodeIndex::new(path[*current_step - 1] as usize);
+                let prev_pos = self.road_graph.inner()[prev_node].pos;
+                let seg_dx = raw_target[0] - prev_pos[0];
+                let seg_dy = raw_target[1] - prev_pos[1];
+                let seg_len = (seg_dx * seg_dx + seg_dy * seg_dy).sqrt();
+                if seg_len > 0.1 {
+                    // Offset 5m to the right of the road direction (sidewalk).
+                    let perp_x = -seg_dy / seg_len;
+                    let perp_y = seg_dx / seg_len;
+                    [raw_target[0] + perp_x * 5.0, raw_target[1] + perp_y * 5.0]
+                } else {
+                    raw_target
+                }
+            } else {
+                raw_target
+            };
 
             // Build neighbor list from spatial index (all agent types).
             let nearby = spatial.nearest_within_radius(*pos, 5.0);

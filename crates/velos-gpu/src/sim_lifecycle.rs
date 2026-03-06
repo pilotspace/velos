@@ -72,10 +72,25 @@ impl SimWorld {
         let jitter_y = self.rng.gen_range(-5.0..5.0);
         let path_u32: Vec<u32> = path.iter().map(|n| n.index() as u32).collect();
 
+        // Offset pedestrians to the sidewalk (5m perpendicular to road direction).
+        let (spawn_x, spawn_y) = if vtype == VehicleType::Pedestrian {
+            let seg_dx = next_pos[0] - start_pos[0];
+            let seg_dy = next_pos[1] - start_pos[1];
+            let seg_len = (seg_dx * seg_dx + seg_dy * seg_dy).sqrt().max(0.1);
+            let perp_x = -seg_dy / seg_len;
+            let perp_y = seg_dx / seg_len;
+            (
+                start_pos[0] + perp_x * 5.0 + jitter_x * 0.5,
+                start_pos[1] + perp_y * 5.0 + jitter_y * 0.5,
+            )
+        } else {
+            (start_pos[0] + jitter_x, start_pos[1] + jitter_y)
+        };
+
         let base_components = (
             Position {
-                x: start_pos[0] + jitter_x,
-                y: start_pos[1] + jitter_y,
+                x: spawn_x,
+                y: spawn_y,
             },
             Kinematics {
                 vx: heading.cos() * 0.1,
