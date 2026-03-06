@@ -54,10 +54,10 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Application
 
-- [ ] **APP-01**: Tauri v2 native macOS window hosts wgpu render surface for simulation visualization alongside React webview for dashboard
+- [ ] **APP-01**: winit native macOS window hosts wgpu render surface for simulation visualization with egui overlay for dashboard
 - [ ] **APP-02**: wgpu 2D renderer draws top-down view of road network with agents as colored shapes (motorbikes, cars, pedestrians) moving in real-time
-- [ ] **APP-03**: Tauri IPC bridge enables simulation control commands (start, stop, pause, speed adjustment, reset) from React frontend to Rust backend
-- [ ] **APP-04**: React+TypeScript dashboard (built with Vite) displays simulation controls, real-time metrics, and agent statistics
+- [ ] **APP-03**: egui UI controls invoke simulation engine methods directly (start, stop, pause, speed adjustment, reset) via in-process function calls
+- [ ] **APP-04**: egui dashboard panels display simulation controls, real-time metrics, and agent statistics
 
 ### Metrics & Performance
 

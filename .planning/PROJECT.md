@@ -2,7 +2,7 @@
 
 ## What This Is
 
-A native macOS desktop application that simulates mixed urban traffic (motorbikes, cars, pedestrians) in real-time using GPU compute. The first slice targets ~1K agents in a small Ho Chi Minh City area, rendered natively via wgpu on Apple Silicon (Metal backend). Built as a Tauri app with a Rust simulation engine and React/TypeScript dashboard.
+A native macOS desktop application that simulates mixed urban traffic (motorbikes, cars, pedestrians) in real-time using GPU compute. The first slice targets ~1K agents in a small Ho Chi Minh City area, rendered natively via wgpu on Apple Silicon (Metal backend). Built as a pure Rust application using winit for windowing and egui for the dashboard UI.
 
 ## Core Value
 
@@ -31,10 +31,10 @@ Motorbikes move realistically through traffic using continuous sublane positioni
 - [ ] Mesoscopic queue model with graduated buffer zone transitions
 - [ ] BPR+ETS+historical ensemble for travel time prediction
 - [ ] OD matrices and time-of-day demand profiles for agent spawning
-- [ ] Tauri v2 app shell with wgpu render surface
-- [ ] Native wgpu rendering showing agents moving on road network
-- [ ] Tauri IPC for simulation control (start/stop/speed/reset)
-- [ ] React+TypeScript dashboard panels (via Vite) for metrics and controls
+- [ ] winit window with wgpu render surface for simulation visualization
+- [ ] Native wgpu 2D rendering showing agents moving on road network
+- [ ] egui immediate-mode UI for simulation controls (start/stop/speed/reset)
+- [ ] egui dashboard panels for real-time metrics and agent statistics
 - [ ] Frame time and throughput benchmarks
 - [ ] API server (gRPC via tonic + REST via axum) for external/headless access
 
@@ -47,7 +47,7 @@ Motorbikes move realistically through traffic using continuous sublane positioni
 - FCD/GeoJSON/Parquet data exports — deferred to later milestone
 - Calibration / GEH validation — no real-world data comparison yet
 - Scenario DSL / batch runner — interactive single-scenario only
-- Redis pub/sub / WebSocket scaling — Tauri IPC handles local control
+- Redis pub/sub / WebSocket scaling — in-process egui handles local control
 - OAuth / authentication — single-user desktop app
 - CesiumJS 3D visualization — 2D top-down view sufficient
 
@@ -64,8 +64,8 @@ The codebase currently has architecture docs, presentation slides, and GSD plann
 - **Platform**: macOS Apple Silicon (Metal GPU backend via wgpu)
 - **Scale**: ~1K agents on a small HCMC road network segment
 - **Toolchain**: Rust nightly (Edition 2024) — needs `portable_simd`, async traits
-- **App framework**: Tauri v2 for native desktop shell
-- **Frontend**: React + TypeScript + Vite (inside Tauri webview)
+- **App framework**: winit + egui (pure Rust, no webview)
+- **UI**: egui immediate-mode GUI rendered via wgpu
 - **No external services**: Everything runs locally, no cloud dependencies
 
 ## Tech Stack
@@ -75,12 +75,12 @@ The codebase currently has architecture docs, presentation slides, and GSD plann
 | Language | Rust nightly (2024 edition) | portable_simd for fixed-point math, async traits |
 | GPU | wgpu + WGSL shaders | Cross-platform GPU abstraction, Metal on macOS |
 | ECS | hecs | Lightweight, minimal overhead for simulation entities |
-| CPU parallel | rayon + tokio | rayon for compute (OSM parse, pathfinding), tokio for async IO/Tauri |
+| CPU parallel | rayon + tokio | rayon for compute (OSM parse, pathfinding), tokio for async IO |
 | Pathfinding | Custom CCH | Full control over dynamic weight customization (3ms update target) |
 | Spatial index | rstar | R-tree for neighbor queries in agent interactions |
-| App shell | Tauri v2 | Native macOS window with web view for dashboard |
-| Frontend | React + TypeScript + Vite | Dashboard panels, simulation controls |
-| Sim control | Tauri IPC | Direct Rust-to-frontend communication, no separate API server |
+| Window | winit | Cross-platform windowing, proven with wgpu (used by Bevy) |
+| UI | egui + egui-wgpu | Immediate-mode GUI rendered on same wgpu surface as simulation |
+| Sim control | In-process | Direct function calls from egui to simulation engine, zero overhead |
 | Serialization | bincode (internal) + Parquet (future) | Fast checkpoints now, columnar exports later |
 | Fixed-point | Q16.16 / Q12.20 / Q8.8 | Cross-GPU determinism, integer arithmetic in shaders |
 
@@ -88,7 +88,7 @@ The codebase currently has architecture docs, presentation slides, and GSD plann
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| Tauri instead of gRPC+deck.gl | Single-machine macOS target — simpler than client-server architecture | — Pending |
+| winit+egui instead of Tauri+React | No webview/wgpu surface conflict, single Rust binary, proven pattern (Bevy ecosystem) | — Decided |
 | Custom CCH over rust_road_router | Full control over dynamic weight API, tighter integration | — Pending |
 | wgpu native render over deck.gl | Direct GPU access for simulation + rendering, no web overhead | — Pending |
 | Nightly Rust | Need portable_simd for fixed-point math performance | — Pending |

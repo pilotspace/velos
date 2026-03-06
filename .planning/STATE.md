@@ -73,7 +73,7 @@ None yet.
 - [Phase 1]: WGSL lacks i64 -- Q16.16 multiply can overflow i32 intermediates. May need Q20.12 or f32+@invariant fallback.
 - [Phase 2]: Gridlock detection cycle-finding algorithm choice TBD (tarjan vs simple visited-set).
 - [Phase 4]: CCH has no off-the-shelf Rust crate -- full custom implementation required using petgraph + rayon.
-- [Phase 5]: Tauri+wgpu surface integration is HIGH RISK -- no production example exists. May need two-window fallback or winit+egui.
+- [Phase 5]: RESOLVED -- switched from Tauri+React to winit+egui. Eliminates webview/wgpu surface conflict entirely. Proven pattern (Bevy ecosystem).
 
 ## Session Continuity
 

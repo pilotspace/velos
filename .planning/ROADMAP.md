@@ -2,7 +2,7 @@
 
 ## Overview
 
-VELOS validates GPU-accelerated traffic microsimulation on macOS Apple Silicon through five phases: prove the GPU compute pipeline works (spikes), build the road network with core vehicle models, add the motorbike sublane differentiator alongside pedestrians and bicycles, layer on routing/prediction/meso-micro hybrid, then wrap everything in a native Tauri desktop application.
+VELOS validates GPU-accelerated traffic microsimulation on macOS Apple Silicon through five phases: prove the GPU compute pipeline works (spikes), build the road network with core vehicle models, add the motorbike sublane differentiator alongside pedestrians and bicycles, layer on routing/prediction/meso-micro hybrid, then wrap everything in a native desktop application using winit + egui.
 
 ## Phases
 
@@ -16,7 +16,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [ ] **Phase 2: Road Network & Core Vehicle Models** - Build HCMC road graph, IDM car-following, MOBIL lane-change, signals, demand spawning, gridlock detection
 - [ ] **Phase 3: Motorbike Sublane & Pedestrian & Bicycle** - Continuous lateral positioning, social force pedestrians, bicycle agents -- the core differentiator
 - [ ] **Phase 4: Routing & Prediction & Meso-Micro** - CCH pathfinding, dynamic rerouting, prediction ensemble, mesoscopic hybrid zones
-- [ ] **Phase 5: Desktop Application** - Tauri v2 shell, wgpu 2D rendering, React dashboard, simulation controls via IPC
+- [ ] **Phase 5: Desktop Application** - winit window, wgpu 2D rendering, egui dashboard, simulation controls via in-process calls
 
 ## Phase Details
 
@@ -30,12 +30,12 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. hecs entities project into SoA GPU buffers and read back correctly after a compute dispatch round-trip
   4. Per-lane leader index computation correctly sorts agents by position within each lane, with dual-leader tracking during lane-change transitions
   5. PCG hash seeded with (agent_id, step) produces uniform noise in WGSL without using rand(), and results are deterministic across runs
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
-- [ ] 01-01: TBD
-- [ ] 01-02: TBD
-- [ ] 01-03: TBD
+- [ ] 01-01-PLAN.md -- Workspace bootstrap, fixed-point types (Q16.16/Q12.20/Q8.8), golden vectors, wgpu device/buffer/dispatcher foundation, WGSL fixed-point parity
+- [ ] 01-02-PLAN.md -- ECS-to-GPU round-trip with 1K agents (GO/NO-GO gate)
+- [ ] 01-03-PLAN.md -- Wave-front dispatch with leader sort, PCG hash, integrated benchmark
 
 ### Phase 2: Road Network & Core Vehicle Models
 **Goal**: Cars spawn from OD matrices onto a real HCMC road network, follow IDM car-following, change lanes via MOBIL, obey traffic signals, and gridlock detection prevents intersection deadlocks
@@ -86,14 +86,14 @@ Plans:
 - [ ] 04-03: TBD
 
 ### Phase 5: Desktop Application
-**Goal**: A native macOS Tauri application displays the running simulation with 2D agent visualization and provides interactive controls via a React dashboard
+**Goal**: A native macOS winit+egui application displays the running simulation with 2D agent visualization via wgpu and provides interactive controls via egui panels
 **Depends on**: Phase 4
 **Requirements**: APP-01, APP-02, APP-03, APP-04
 **Success Criteria** (what must be TRUE):
-  1. A Tauri v2 window opens on macOS with a wgpu render surface displaying the road network and moving agents
+  1. A winit window opens on macOS with a wgpu render surface displaying the road network and moving agents
   2. The 2D top-down view shows motorbikes, cars, pedestrians, and bicycles as distinct colored shapes moving along roads in real-time
-  3. Start, stop, pause, speed adjustment, and reset commands from the React frontend reach the Rust simulation backend via Tauri IPC and take effect immediately
-  4. A React+TypeScript dashboard displays real-time simulation metrics (frame time, agent count, throughput) and provides control widgets
+  3. Start, stop, pause, speed adjustment, and reset commands from the egui UI invoke simulation engine methods directly and take effect immediately
+  4. egui dashboard panels display real-time simulation metrics (frame time, agent count, throughput) and provide control widgets
 **Plans**: TBD
 
 Plans:
@@ -107,7 +107,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. GPU Foundation & Spikes | 0/3 | Not started | - |
+| 1. GPU Foundation & Spikes | 0/3 | Planning complete | - |
 | 2. Road Network & Core Vehicle Models | 0/3 | Not started | - |
 | 3. Motorbike Sublane & Pedestrian & Bicycle | 0/2 | Not started | - |
 | 4. Routing & Prediction & Meso-Micro | 0/3 | Not started | - |
