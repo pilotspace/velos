@@ -25,8 +25,8 @@ Requirements for initial release. Each maps to roadmap phases.
 
 - [x] **VEH-01**: IDM car-following model adjusts each agent's speed based on gap to leader with ballistic stopping guard preventing negative velocities
 - [x] **VEH-02**: MOBIL lane-change model evaluates lane-change benefit vs politeness threshold (0.3 for HCMC) for car agents
-- [ ] **VEH-03**: Motorbike sublane model uses continuous lateral position enabling filtering between cars, red-light clustering, and swarm behavior
-- [ ] **VEH-04**: Pedestrian basic social force model (repulsion from other agents + attraction to destination), including jaywalking probability (0.3 for HCMC)
+- [x] **VEH-03**: Motorbike sublane model uses continuous lateral position enabling filtering between cars, red-light clustering, and swarm behavior
+- [x] **VEH-04**: Pedestrian basic social force model (repulsion from other agents + attraction to destination), including jaywalking probability (0.3 for HCMC)
 
 ### Road Network
 
@@ -161,8 +161,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | GRID-01 | Phase 2 | Complete |
 | APP-01 | Phase 2 | Pending |
 | APP-02 | Phase 2 | Pending |
-| VEH-03 | Phase 3 | Pending |
-| VEH-04 | Phase 3 | Pending |
+| VEH-03 | Phase 3 | Complete |
+| VEH-04 | Phase 3 | Complete |
 
 **Coverage:**
 - v1 requirements: 25 total

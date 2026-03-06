@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: in-progress
-stopped_at: Completed 02-01-PLAN.md
-last_updated: "2026-03-06T14:40:14Z"
-last_activity: "2026-03-06 -- Plan 01 complete: velos-net crate with OSM import, spatial index, A* routing"
+stopped_at: "Completed 03-01-PLAN.md"
+last_updated: "2026-03-06T16:47:34Z"
+last_activity: "2026-03-06 -- Plan 03-01 complete: sublane + social force models with TDD"
 progress:
   total_phases: 3
-  completed_phases: 1
-  total_plans: 6
-  completed_plans: 5
-  percent: 83
+  completed_phases: 2
+  total_plans: 8
+  completed_plans: 7
+  percent: 88
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-06)
 
 **Core value:** Motorbikes move realistically through traffic using continuous sublane positioning -- not forced into discrete lanes like Western traffic models
-**Current focus:** Phase 2: Road Network & Vehicle Models + egui
+**Current focus:** Phase 3: Motorbike Sublane & Pedestrians
 
 ## Current Position
 
-Phase: 2 of 3 (Road Network & Vehicle Models + egui)
-Plan: 4 of 4 (next: 02-04)
-Status: Plans 02-01, 02-02, 02-03 complete -- velos-net, velos-vehicle, velos-demand, velos-signal ready
-Last activity: 2026-03-06 -- Plan 01 complete: velos-net crate with OSM import, spatial index, A* routing
+Phase: 3 of 3 (Motorbike Sublane & Pedestrians)
+Plan: 1 of 2 (completed: 03-01)
+Status: Plan 03-01 complete -- sublane model + social force model with TDD
+Last activity: 2026-03-06 -- Plan 03-01 complete: sublane + social force models
 
-Progress: [████████░░] 83% (Overall)
+Progress: [████████░░] 88% (Overall)
 
 ## Performance Metrics
 
@@ -58,6 +58,7 @@ Progress: [████████░░] 83% (Overall)
 | 02-road-network-vehicle-models-egui | P02 | 5min | 2 tasks | 15 files |
 | 02-road-network-vehicle-models-egui | P03 | 6min | 2 tasks | 8 files |
 | 02-road-network-vehicle-models-egui | P01 | 7min | 2 tasks | 15 files |
+| 03-motorbike-sublane-pedestrians | P01 | 5min | 2 tasks (4 TDD commits) | 6 files |
 
 ## Accumulated Context
 
@@ -88,10 +89,14 @@ Recent decisions affecting current work:
 - [Phase 02 P01]: Overpass API XML converted to PBF via osmium-tool for osmpbf crate compatibility
 - [Phase 02 P01]: Included primary_link/secondary_link/tertiary_link road types for better graph connectivity
 - [Phase 02 P01]: A* edge cost = travel time (length/speed), not raw distance, for realistic routing
+- [Phase 03 P01]: Probe-based gap scanning at 0.3m steps for sublane lateral gap-seeking
+- [Phase 03 P01]: Obstacle-edge sweep for swarming gap search (exact, O(n log n) sort)
+- [Phase 03 P01]: Rng trait for social force jaywalking -- no external rand dependency
+- [Phase 03 P01]: Anisotropic weighting via cos(phi) of ego velocity vs neighbor direction
 
 ### Pending Todos
 
-- Plan 02-04 (integration): wire demand spawner + vehicle models + road graph + egui sidebar -- all subsystem crates ready
+- Plan 03-02 (integration): wire sublane + social force into sim loop, replace step_pedestrians() body
 
 ### Blockers/Concerns
 
@@ -100,6 +105,6 @@ Recent decisions affecting current work:
 
 ## Session Continuity
 
-Last session: 2026-03-06T14:40:14Z
-Stopped at: Completed 02-01-PLAN.md
-Resume file: .planning/phases/02-road-network-vehicle-models-egui/02-01-SUMMARY.md
+Last session: 2026-03-06T16:47:34Z
+Stopped at: Completed 03-01-PLAN.md
+Resume file: .planning/phases/03-motorbike-sublane-pedestrians/03-01-SUMMARY.md

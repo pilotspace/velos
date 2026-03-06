@@ -70,7 +70,7 @@ Plans:
 **Plans**: 2 plans
 
 Plans:
-- [ ] 03-01-PLAN.md -- Sublane model + social force model: pure functions with tests (LateralOffset, gap-seeking, Helbing model)
+- [x] 03-01-PLAN.md -- Sublane model + social force model: pure functions with tests (LateralOffset, gap-seeking, Helbing model)
 - [ ] 03-02-PLAN.md -- Integration: wire models into SimWorld tick loop, spatial index, swarming color, visual verification
 
 ## Progress
@@ -82,4 +82,4 @@ Phases execute in numeric order: 1 -> 2 -> 3
 |-------|----------------|--------|-----------|
 | 1. GPU Pipeline & Visual Proof | 2/2 | Complete   | 2026-03-06 |
 | 2. Road Network & Vehicle Models + egui | 3/4 | In progress | - |
-| 3. Motorbike Sublane & Pedestrians | 0/2 | Not started | - |
+| 3. Motorbike Sublane & Pedestrians | 1/2 | In progress | - |
