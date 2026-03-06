@@ -218,14 +218,13 @@ impl SimWorld {
 
     pub(crate) fn update_wait_state(&mut self, entity: Entity, speed: f64, at_red: bool) {
         let ws = self.world.query_one_mut::<&mut WaitState>(entity).unwrap();
+        ws.at_red_signal = at_red;
         if speed < 0.1 {
             if ws.stopped_since < 0.0 {
                 ws.stopped_since = self.sim_time;
             }
-            ws.at_red_signal = at_red;
         } else {
             ws.stopped_since = -1.0;
-            ws.at_red_signal = false;
         }
     }
 }
