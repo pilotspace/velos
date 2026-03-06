@@ -40,7 +40,10 @@ struct GpuState {
     dispatcher: ComputeDispatcher,
     renderer: Renderer,
     camera: Camera2D,
-    cursor_pos: Vec2,
+    /// True while middle mouse button is physically held down.
+    /// Used to start pan on the first CursorMoved after the button press,
+    /// so begin_pan always receives a valid (non-zero) cursor position.
+    middle_pressed: bool,
     frame_count: u64,
 }
 
@@ -157,7 +160,7 @@ impl GpuState {
             dispatcher,
             renderer,
             camera,
-            cursor_pos: Vec2::ZERO,
+            middle_pressed: false,
             frame_count: 0,
         }
     }
@@ -314,8 +317,15 @@ impl ApplicationHandler for VelosApp {
 
             WindowEvent::CursorMoved { position, .. } => {
                 let new_pos = Vec2::new(position.x as f32, position.y as f32);
-                state.cursor_pos = new_pos;
-                state.camera.update_pan(new_pos);
+                if state.middle_pressed {
+                    // begin_pan on first CursorMoved while button held, so last_cursor
+                    // is always set from a real position event (never Vec2::ZERO).
+                    if !state.camera.is_panning() {
+                        state.camera.begin_pan(new_pos);
+                    } else {
+                        state.camera.update_pan(new_pos);
+                    }
+                }
             }
 
             WindowEvent::MouseInput {
@@ -325,8 +335,15 @@ impl ApplicationHandler for VelosApp {
             } => {
                 if button == MouseButton::Middle {
                     match btn_state {
-                        ElementState::Pressed => state.camera.begin_pan(state.cursor_pos),
-                        ElementState::Released => state.camera.end_pan(),
+                        ElementState::Pressed => {
+                            state.middle_pressed = true;
+                            // Don't call begin_pan here; wait for the first CursorMoved
+                            // so begin_pan receives the actual cursor position from the event.
+                        }
+                        ElementState::Released => {
+                            state.middle_pressed = false;
+                            state.camera.end_pan();
+                        }
                     }
                 }
             }

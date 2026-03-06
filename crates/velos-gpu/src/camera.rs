@@ -88,6 +88,11 @@ impl Camera2D {
     pub fn end_pan(&mut self) {
         self.is_panning = false;
     }
+
+    /// Returns true if a pan drag is currently active.
+    pub fn is_panning(&self) -> bool {
+        self.is_panning
+    }
 }
 
 #[cfg(test)]
