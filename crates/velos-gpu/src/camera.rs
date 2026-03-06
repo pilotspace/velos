@@ -8,7 +8,7 @@ use glam::{Mat4, Vec2};
 const MIN_ZOOM: f32 = 0.1;
 const MAX_ZOOM: f32 = 100.0;
 
-/// 2D orthographic camera with zoom (scroll wheel) and pan (middle-mouse drag).
+/// 2D orthographic camera with zoom (scroll wheel) and pan (left-drag or horizontal scroll).
 pub struct Camera2D {
     /// World-space center of the view (metres).
     pub center: Vec2,
@@ -92,6 +92,14 @@ impl Camera2D {
     /// Returns true if a pan drag is currently active.
     pub fn is_panning(&self) -> bool {
         self.is_panning
+    }
+
+    /// Pan the camera by a pixel-space delta (e.g. from scroll X or touch).
+    /// Positive dx moves the world right (camera center moves right).
+    /// Positive dy moves the world down in screen space (camera center moves up in world space).
+    pub fn pan_by(&mut self, dx: f32, dy: f32) {
+        self.center.x += dx / self.zoom;
+        self.center.y -= dy / self.zoom;
     }
 }
 

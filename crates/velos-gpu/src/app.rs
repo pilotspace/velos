@@ -40,10 +40,10 @@ struct GpuState {
     dispatcher: ComputeDispatcher,
     renderer: Renderer,
     camera: Camera2D,
-    /// True while middle mouse button is physically held down.
-    /// Used to start pan on the first CursorMoved after the button press,
-    /// so begin_pan always receives a valid (non-zero) cursor position.
-    middle_pressed: bool,
+    /// True while the left mouse button is held down.
+    /// Pan starts on the first CursorMoved after the press so begin_pan
+    /// always receives a real cursor position (never Vec2::ZERO).
+    left_pressed: bool,
     frame_count: u64,
 }
 
@@ -160,7 +160,7 @@ impl GpuState {
             dispatcher,
             renderer,
             camera,
-            middle_pressed: false,
+            left_pressed: false,
             frame_count: 0,
         }
     }
@@ -308,16 +308,32 @@ impl ApplicationHandler for VelosApp {
             }
 
             WindowEvent::MouseWheel { delta, .. } => {
-                let lines = match delta {
-                    MouseScrollDelta::LineDelta(_, y) => y,
-                    MouseScrollDelta::PixelDelta(pos) => pos.y as f32 / 20.0,
-                };
-                state.camera.scroll(lines);
+                match delta {
+                    // Physical scroll wheel or trackpad line-based scroll.
+                    // X delta pans horizontally; Y delta zooms.
+                    MouseScrollDelta::LineDelta(x, y) => {
+                        if x.abs() > 0.0 {
+                            // Horizontal scroll: pan X. Scale to ~pixels at 1x zoom.
+                            state.camera.pan_by(x * 20.0, 0.0);
+                        }
+                        state.camera.scroll(y);
+                    }
+                    // macOS trackpad two-finger scroll fires PixelDelta.
+                    // X delta pans; Y delta zooms (natural scroll).
+                    MouseScrollDelta::PixelDelta(pos) => {
+                        let px = pos.x as f32;
+                        let py = pos.y as f32;
+                        if px.abs() > 1.0 {
+                            state.camera.pan_by(px, 0.0);
+                        }
+                        state.camera.scroll(py / 20.0);
+                    }
+                }
             }
 
             WindowEvent::CursorMoved { position, .. } => {
                 let new_pos = Vec2::new(position.x as f32, position.y as f32);
-                if state.middle_pressed {
+                if state.left_pressed {
                     // begin_pan on first CursorMoved while button held, so last_cursor
                     // is always set from a real position event (never Vec2::ZERO).
                     if !state.camera.is_panning() {
@@ -333,15 +349,15 @@ impl ApplicationHandler for VelosApp {
                 button,
                 ..
             } => {
-                if button == MouseButton::Middle {
+                if button == MouseButton::Left {
                     match btn_state {
                         ElementState::Pressed => {
-                            state.middle_pressed = true;
+                            state.left_pressed = true;
                             // Don't call begin_pan here; wait for the first CursorMoved
                             // so begin_pan receives the actual cursor position from the event.
                         }
                         ElementState::Released => {
-                            state.middle_pressed = false;
+                            state.left_pressed = false;
                             state.camera.end_pan();
                         }
                     }
