@@ -13,8 +13,9 @@ VELOS validates GPU-accelerated traffic microsimulation on macOS Apple Silicon t
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: GPU Pipeline & Visual Proof** - Validate wgpu/Metal compute pipeline, f32 shaders, ECS-to-GPU round-trip, winit window with GPU-instanced dot/triangle renderer, benchmarks (completed 2026-03-06)
-- [ ] **Phase 2: Road Network & Vehicle Models + egui** - Build HCMC road graph, IDM car-following, MOBIL lane-change, signals, A* routing, demand spawning, gridlock detection, egui dashboard and controls
+- [x] **Phase 2: Road Network & Vehicle Models + egui** - Build HCMC road graph, IDM car-following, MOBIL lane-change, signals, A* routing, demand spawning, gridlock detection, egui dashboard and controls (completed 2026-03-07)
 - [x] **Phase 3: Motorbike Sublane & Pedestrians** - Continuous lateral positioning, basic social force pedestrians, mixed-traffic interactions (filtering, clustering) (completed 2026-03-07)
+- [ ] **Phase 4: MOBIL Wiring + Phase 2 Verification** - Wire MOBIL lane-change into sim loop, create Phase 2 VERIFICATION.md, fix documentation gaps (APP-01/APP-02, ROADMAP checkboxes)
 
 ## Phase Details
 
@@ -54,9 +55,9 @@ Plans:
 
 Plans:
 - [x] 02-01-PLAN.md -- velos-net crate: OSM import, projection, road graph, spatial index, A* routing
-- [ ] 02-02-PLAN.md -- velos-vehicle + velos-signal: IDM, MOBIL, gridlock, traffic signals
-- [ ] 02-03-PLAN.md -- velos-demand: OD matrix, time-of-day profiles, agent spawner
-- [ ] 02-04-PLAN.md -- Integration: wgpu downgrade, per-type rendering, wire subsystems, egui sidebar
+- [x] 02-02-PLAN.md -- velos-vehicle + velos-signal: IDM, MOBIL, gridlock, traffic signals
+- [x] 02-03-PLAN.md -- velos-demand: OD matrix, time-of-day profiles, agent spawner
+- [x] 02-04-PLAN.md -- Integration: wgpu downgrade, per-type rendering, wire subsystems, egui sidebar
 
 ### Phase 3: Motorbike Sublane & Pedestrians
 **Goal**: Motorbikes move with continuous lateral positioning (the core differentiator) and pedestrians move via Helbing social force with jaywalking, with cross-type collision avoidance at intersections
@@ -73,6 +74,21 @@ Plans:
 - [x] 03-01-PLAN.md -- Sublane model + social force model: pure functions with tests (LateralOffset, gap-seeking, Helbing model)
 - [x] 03-02-PLAN.md -- Integration: wire models into SimWorld tick loop, spatial index, swarming color, visual verification
 
+### Phase 4: MOBIL Wiring + Phase 2 Verification
+**Goal**: Wire the MOBIL lane-change model into the simulation loop so cars can change lanes, create formal Phase 2 VERIFICATION.md, and fix all documentation staleness (APP-01/APP-02 status, ROADMAP checkboxes)
+**Depends on**: Phase 2, Phase 3
+**Requirements**: VEH-02 (re-verify), APP-01 (doc fix), APP-02 (doc fix)
+**Gap Closure:** Closes gaps from v1.0 milestone audit
+**Success Criteria** (what must be TRUE):
+  1. `mobil_decision()` is called in the sim loop and cars change lanes when MOBIL benefit exceeds politeness threshold
+  2. Phase 2 VERIFICATION.md exists with pass/fail for all 13 Phase 2 requirements
+  3. APP-01 and APP-02 marked Complete in REQUIREMENTS.md traceability table
+  4. Nyquist validation passes for Phases 2 and 3
+**Plans**: 1 plan
+
+Plans:
+- [ ] 04-01-PLAN.md -- Wire MOBIL into sim loop, Phase 2 verification, documentation fixes
+
 ## Progress
 
 **Execution Order:**
@@ -81,5 +97,6 @@ Phases execute in numeric order: 1 -> 2 -> 3
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. GPU Pipeline & Visual Proof | 2/2 | Complete   | 2026-03-06 |
-| 2. Road Network & Vehicle Models + egui | 3/4 | In progress | - |
+| 2. Road Network & Vehicle Models + egui | 4/4 | Complete   | 2026-03-07 |
 | 3. Motorbike Sublane & Pedestrians | 2/2 | Complete   | 2026-03-07 |
+| 4. MOBIL Wiring + Phase 2 Verification | 0/1 | Pending | - |
