@@ -1,0 +1,20 @@
+[workspace]
+resolver = "2"
+members = ["crates/velos-core", "crates/velos-gpu"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+authors = ["Tin Dang"]
+license = "MIT"
+
+[workspace.dependencies]
+wgpu = "28"
+hecs = "0.11"
+winit = "0.30"
+bytemuck = { version = "1", features = ["derive"] }
+thiserror = "2"
+log = "0.4"
+env_logger = "0.11"
+glam = "0.29"
+pollster = "0.4"
