@@ -10,4 +10,5 @@ pub mod error;
 pub mod gridlock;
 pub mod idm;
 pub mod mobil;
+pub mod sublane;
 pub mod types;

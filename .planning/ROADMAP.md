@@ -59,7 +59,7 @@ Plans:
 - [ ] 02-04-PLAN.md -- Integration: wgpu downgrade, per-type rendering, wire subsystems, egui sidebar
 
 ### Phase 3: Motorbike Sublane & Pedestrians
-**Goal**: Motorbikes move with continuous lateral positioning (the core differentiator) and pedestrians move via basic social force with jaywalking
+**Goal**: Motorbikes move with continuous lateral positioning (the core differentiator) and pedestrians move via Helbing social force with jaywalking, with cross-type collision avoidance at intersections
 **Depends on**: Phase 2
 **Requirements**: VEH-03, VEH-04
 **Success Criteria** (what must be TRUE):
@@ -67,11 +67,11 @@ Plans:
   2. Motorbikes swarm and cluster at red lights in front of cars, then disperse on green
   3. Pedestrian agents repel each other via basic social force, and jaywalking occurs at configured probability (0.3)
   4. Mixed traffic (motorbikes, cars, pedestrians) interacts correctly at intersections
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] 03-01: TBD
-- [ ] 03-02: TBD
+- [ ] 03-01-PLAN.md -- Sublane model + social force model: pure functions with tests (LateralOffset, gap-seeking, Helbing model)
+- [ ] 03-02-PLAN.md -- Integration: wire models into SimWorld tick loop, spatial index, swarming color, visual verification
 
 ## Progress
 
