@@ -392,30 +392,22 @@ impl SimWorld {
                 // Longitudinal gap: project displacement along heading direction.
                 let longitudinal = dx * heading.cos() + dy * heading.sin();
 
-                neighbor_infos.push(NeighborInfo {
-                    lateral_offset: n_lateral,
-                    longitudinal_gap: longitudinal,
-                    half_width: n_half_width,
-                    speed: n_speed,
-                });
+                // Only add vehicles (cars/motorbikes) to sublane neighbor list.
+                // Pedestrians are off-road and shouldn't affect lateral gap computation.
+                if n_vtype != VehicleType::Pedestrian {
+                    neighbor_infos.push(NeighborInfo {
+                        lateral_offset: n_lateral,
+                        longitudinal_gap: longitudinal,
+                        half_width: n_half_width,
+                        speed: n_speed,
+                    });
 
-                // Cross-type: slow for pedestrians within 3m ahead and within 1.0m laterally.
-                let lat_dist = (-dx * heading.sin() + dy * heading.cos()).abs();
-                if n_vtype == VehicleType::Pedestrian
-                    && longitudinal > 0.5
-                    && longitudinal < 3.0
-                    && lat_dist < 1.0
-                    && longitudinal < idm_gap
-                {
-                    idm_gap = longitudinal;
-                    idm_delta_v = (*speed - n_speed).max(0.0);
-                }
-
-                // Longitudinal IDM leader: nearest ahead on similar lateral band.
-                let lateral_dist = -dx * heading.sin() + dy * heading.cos();
-                if longitudinal > 0.0 && lateral_dist.abs() < 1.5 && longitudinal < idm_gap {
-                    idm_gap = longitudinal;
-                    idm_delta_v = *speed - n_speed;
+                    // Longitudinal IDM leader: nearest vehicle ahead on similar lateral band.
+                    let lateral_dist = (-dx * heading.sin() + dy * heading.cos()).abs();
+                    if longitudinal > 0.0 && lateral_dist < 1.5 && longitudinal < idm_gap {
+                        idm_gap = longitudinal;
+                        idm_delta_v = *speed - n_speed;
+                    }
                 }
             }
 
