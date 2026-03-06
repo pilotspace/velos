@@ -48,7 +48,7 @@ pub struct NeighborInfo {
 }
 
 /// Maximum longitudinal distance to consider a neighbor for lateral gap computation.
-const LATERAL_SCAN_AHEAD: f64 = 15.0;
+const LATERAL_SCAN_AHEAD: f64 = 10.0;
 
 
 /// Compute desired lateral target position for a motorbike.

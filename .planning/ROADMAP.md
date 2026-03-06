@@ -15,7 +15,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 1: GPU Pipeline & Visual Proof** - Validate wgpu/Metal compute pipeline, f32 shaders, ECS-to-GPU round-trip, winit window with GPU-instanced dot/triangle renderer, benchmarks (completed 2026-03-06)
 - [x] **Phase 2: Road Network & Vehicle Models + egui** - Build HCMC road graph, IDM car-following, MOBIL lane-change, signals, A* routing, demand spawning, gridlock detection, egui dashboard and controls (completed 2026-03-07)
 - [x] **Phase 3: Motorbike Sublane & Pedestrians** - Continuous lateral positioning, basic social force pedestrians, mixed-traffic interactions (filtering, clustering) (completed 2026-03-07)
-- [ ] **Phase 4: MOBIL Wiring + Phase 2 Verification** - Wire MOBIL lane-change into sim loop, create Phase 2 VERIFICATION.md, fix documentation gaps (APP-01/APP-02, ROADMAP checkboxes)
+- [ ] **Phase 4: MOBIL Wiring + Motorbike Jam Fix + Performance** - Wire MOBIL lane-change into sim loop, fix motorbike traffic jam clustering, optimize spatial query performance at 800+ agents, create Phase 2 VERIFICATION.md, fix documentation gaps
 
 ## Phase Details
 
@@ -74,20 +74,24 @@ Plans:
 - [x] 03-01-PLAN.md -- Sublane model + social force model: pure functions with tests (LateralOffset, gap-seeking, Helbing model)
 - [x] 03-02-PLAN.md -- Integration: wire models into SimWorld tick loop, spatial index, swarming color, visual verification
 
-### Phase 4: MOBIL Wiring + Phase 2 Verification
-**Goal**: Wire the MOBIL lane-change model into the simulation loop so cars can change lanes, create formal Phase 2 VERIFICATION.md, and fix all documentation staleness (APP-01/APP-02 status, ROADMAP checkboxes)
+### Phase 4: MOBIL Wiring + Motorbike Jam Fix + Performance
+**Goal**: Wire the MOBIL lane-change model into the simulation loop, fix motorbike traffic jam/clustering at intersections, optimize spatial query performance for 800+ agents, create formal Phase 2 VERIFICATION.md, and fix documentation staleness
 **Depends on**: Phase 2, Phase 3
 **Requirements**: VEH-02 (re-verify), APP-01 (doc fix), APP-02 (doc fix)
-**Gap Closure:** Closes gaps from v1.0 milestone audit
+**Gap Closure:** Closes gaps from v1.0 milestone audit + fixes motorbike jam + performance regression
 **Success Criteria** (what must be TRUE):
   1. `mobil_decision()` is called in the sim loop and cars change lanes when MOBIL benefit exceeds politeness threshold
-  2. Phase 2 VERIFICATION.md exists with pass/fail for all 13 Phase 2 requirements
-  3. APP-01 and APP-02 marked Complete in REQUIREMENTS.md traceability table
-  4. Nyquist validation passes for Phases 2 and 3
-**Plans**: 1 plan
+  2. Motorbikes flow through intersections without permanent clustering/jamming at 800+ agents
+  3. Frame time < 33ms (30 FPS) at 1000 agents on Metal
+  4. Phase 2 VERIFICATION.md exists with pass/fail for all 13 Phase 2 requirements
+  5. APP-01 and APP-02 marked Complete in REQUIREMENTS.md traceability table
+  6. Nyquist validation passes for Phases 2 and 3
+**Plans**: 3 plans
 
 Plans:
-- [ ] 04-01-PLAN.md -- Wire MOBIL into sim loop, Phase 2 verification, documentation fixes
+- [ ] 04-01-PLAN.md -- Wire MOBIL into sim loop with gradual drift
+- [ ] 04-02-PLAN.md -- Fix motorbike jam + optimize spatial query performance
+- [ ] 04-03-PLAN.md -- Phase 2 verification, documentation fixes
 
 ## Progress
 
@@ -99,4 +103,4 @@ Phases execute in numeric order: 1 -> 2 -> 3
 | 1. GPU Pipeline & Visual Proof | 2/2 | Complete   | 2026-03-06 |
 | 2. Road Network & Vehicle Models + egui | 4/4 | Complete   | 2026-03-07 |
 | 3. Motorbike Sublane & Pedestrians | 2/2 | Complete   | 2026-03-07 |
-| 4. MOBIL Wiring + Phase 2 Verification | 0/1 | Pending | - |
+| 4. MOBIL Wiring + Motorbike Jam Fix + Performance | 0/3 | Pending | - |
