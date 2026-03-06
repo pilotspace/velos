@@ -1,0 +1,11 @@
+[package]
+name = "velos-vehicle"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "IDM car-following, MOBIL lane-change, VehicleType enum, and gridlock detection"
+
+[dependencies]
+thiserror.workspace = true
+log.workspace = true

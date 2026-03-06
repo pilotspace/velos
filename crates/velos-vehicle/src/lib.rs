@@ -1,0 +1,13 @@
+//! Vehicle behaviour models for VELOS traffic microsimulation.
+//!
+//! This crate provides:
+//! - **IDM** (Intelligent Driver Model) car-following acceleration
+//! - **MOBIL** lane-change decision model
+//! - **VehicleType** enum with default parameter sets
+//! - **Gridlock** cycle detection on agent waiting graphs
+
+pub mod error;
+pub mod gridlock;
+pub mod idm;
+pub mod mobil;
+pub mod types;
