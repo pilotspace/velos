@@ -71,3 +71,22 @@ pub struct WaitState {
     /// True if the agent is waiting at a red signal (not gridlock).
     pub at_red_signal: bool,
 }
+
+/// Active lane-change state for cars executing a MOBIL-triggered lane change.
+/// Attached when lane change starts, removed when drift completes.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LaneChangeState {
+    /// Target lane index (0-based from right).
+    pub target_lane: u8,
+    /// Time remaining for the drift (seconds). Starts at 2.0, counts down.
+    pub time_remaining: f64,
+    /// Simulation time when lane change started (for cooldown).
+    pub started_at: f64,
+}
+
+/// Tracks the simulation time when the last lane change completed (for cooldown).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LastLaneChange {
+    /// Simulation time when the last lane change finished.
+    pub completed_at: f64,
+}

@@ -7,7 +7,9 @@ use petgraph::graph::{EdgeIndex, NodeIndex};
 use petgraph::visit::EdgeRef;
 use petgraph::Direction;
 
-use velos_core::components::{Kinematics, Position, RoadPosition, Route, WaitState};
+use velos_core::components::{
+    Kinematics, LaneChangeState, Position, RoadPosition, Route, WaitState,
+};
 use velos_signal::plan::PhaseState;
 
 use crate::sim::SimWorld;
@@ -152,6 +154,10 @@ impl SimWorld {
                 route.current_step = new_step;
                 rp.edge_index = edge_idx;
                 rp.offset_m = overflow;
+                rp.lane = 0; // reset lane on new edge
+                // Cancel any in-progress car lane change on edge transition.
+                // Only remove LaneChangeState (not LateralOffset -- motorbikes keep theirs).
+                let _ = self.world.remove::<(LaneChangeState,)>(entity);
             }
             _ => {
                 let route = self.world.query_one_mut::<&mut Route>(entity).unwrap();
@@ -214,6 +220,54 @@ impl SimWorld {
         let pos = self.world.query_one_mut::<&mut Position>(entity).unwrap();
         pos.x += offset_from_center * perp_x;
         pos.y += offset_from_center * perp_y;
+    }
+
+    /// Find the nearest leader (ahead) in a specific lane on a specific edge.
+    /// Returns (gap_m, leader_speed).
+    pub(crate) fn find_leader_in_lane(
+        own_offset: f64,
+        edge_index: u32,
+        lane: u8,
+        edge_lane_agents: &HashMap<(u32, u8), Vec<(Entity, f64)>>,
+        speed_map: &HashMap<Entity, f64>,
+    ) -> (f64, f64) {
+        let Some(agents) = edge_lane_agents.get(&(edge_index, lane)) else {
+            return (1000.0, 0.0);
+        };
+        let mut closest_gap = 1000.0_f64;
+        let mut leader_speed = 0.0_f64;
+        for (entity, offset) in agents {
+            let gap = offset - own_offset;
+            if gap > 0.0 && gap < closest_gap {
+                closest_gap = gap;
+                leader_speed = speed_map.get(entity).copied().unwrap_or(0.0);
+            }
+        }
+        (closest_gap, leader_speed)
+    }
+
+    /// Find the nearest follower (behind) in a specific lane on a specific edge.
+    /// Returns (gap_m, follower_speed).
+    pub(crate) fn find_follower_in_lane(
+        own_offset: f64,
+        edge_index: u32,
+        lane: u8,
+        edge_lane_agents: &HashMap<(u32, u8), Vec<(Entity, f64)>>,
+        speed_map: &HashMap<Entity, f64>,
+    ) -> (f64, f64) {
+        let Some(agents) = edge_lane_agents.get(&(edge_index, lane)) else {
+            return (1000.0, 0.0);
+        };
+        let mut closest_gap = 1000.0_f64;
+        let mut follower_speed = 0.0_f64;
+        for (entity, offset) in agents {
+            let gap = own_offset - offset;
+            if gap > 0.0 && gap < closest_gap {
+                closest_gap = gap;
+                follower_speed = speed_map.get(entity).copied().unwrap_or(0.0);
+            }
+        }
+        (closest_gap, follower_speed)
     }
 
     pub(crate) fn update_wait_state(&mut self, entity: Entity, speed: f64, at_red: bool) {

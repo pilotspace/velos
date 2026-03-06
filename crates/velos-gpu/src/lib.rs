@@ -10,6 +10,7 @@ pub mod error;
 pub mod renderer;
 pub mod sim;
 mod sim_helpers;
+mod sim_mobil;
 mod sim_lifecycle;
 mod sim_render;
 pub mod sim_snapshot;

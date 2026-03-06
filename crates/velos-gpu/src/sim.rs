@@ -14,18 +14,15 @@ use rand::rngs::StdRng;
 use rand::SeedableRng;
 
 use velos_core::components::{
-    Kinematics, LaneChangeState, LastLaneChange, LateralOffset, Position, RoadPosition, Route,
-    VehicleType,
+    Kinematics, LaneChangeState, LateralOffset, Position, RoadPosition, Route, VehicleType,
 };
 use velos_demand::{OdMatrix, Spawner, TodProfile, Zone};
 use velos_net::{RoadGraph, SpatialIndex};
 use velos_signal::controller::FixedTimeController;
 use velos_signal::plan::{SignalPhase, SignalPlan};
 use velos_vehicle::idm::{idm_acceleration, integrate_with_stopping_guard, IdmParams};
-use velos_vehicle::mobil::{mobil_decision, LaneChangeContext};
 use velos_vehicle::social_force::{self, PedestrianNeighbor, SocialForceParams};
 use velos_vehicle::sublane::{self, NeighborInfo, SublaneParams};
-use velos_vehicle::types::default_mobil_params;
 
 use crate::renderer::AgentInstance;
 use crate::sim_snapshot::AgentSnapshot;
@@ -223,17 +220,19 @@ impl SimWorld {
 
     /// Step car vehicles only. Motorbikes handled by step_motorbikes_sublane.
     fn step_vehicles(&mut self, dt: f64, spatial: &SpatialIndex, snapshot: &AgentSnapshot) {
-        struct CarState {
+        use crate::sim_mobil::CarMobilContext;
+
+        struct CarSnap {
             entity: Entity,
             rp: RoadPosition,
             speed: f64,
             heading: f64,
-            idm_params: IdmParams,
+            idm: IdmParams,
             pos: [f64; 2],
-            has_lane_change: bool,
+            has_lc: bool,
         }
 
-        let agents: Vec<CarState> = self
+        let agents: Vec<CarSnap> = self
             .world
             .query_mut::<(
                 Entity,
@@ -246,14 +245,14 @@ impl SimWorld {
             )>()
             .into_iter()
             .filter(|(_, _, _, _, vt, _, _)| **vt == VehicleType::Car)
-            .map(|(e, rp, kin, idm, _, pos, lcs)| CarState {
+            .map(|(e, rp, kin, idm, _, pos, lcs)| CarSnap {
                 entity: e,
                 rp: *rp,
                 speed: kin.speed,
                 heading: kin.heading,
-                idm_params: *idm,
+                idm: *idm,
                 pos: [pos.x, pos.y],
-                has_lane_change: lcs.is_some(),
+                has_lc: lcs.is_some(),
             })
             .collect();
 
@@ -270,27 +269,22 @@ impl SimWorld {
                 .or_default()
                 .push((car.entity, car.rp.offset_m));
         }
-        for agents_on_edge in edge_agents.values_mut() {
-            agents_on_edge.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        for v in edge_agents.values_mut() {
+            v.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
         }
-        for agents_in_lane in edge_lane_agents.values_mut() {
-            agents_in_lane.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        for v in edge_lane_agents.values_mut() {
+            v.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
         }
 
-        let speed_map: HashMap<Entity, f64> = agents
-            .iter()
-            .map(|c| (c.entity, c.speed))
-            .collect();
-
-        let mobil_params = default_mobil_params();
-        let sim_time = self.sim_time;
+        let speed_map: HashMap<Entity, f64> =
+            agents.iter().map(|c| (c.entity, c.speed)).collect();
 
         struct CarUpdate {
             entity: Entity,
             v_new: f64,
             new_offset: f64,
             at_red: bool,
-            start_lane_change: Option<(u8, f64)>, // (target_lane, started_at)
+            start_lane_change: Option<(u8, f64)>,
         }
 
         let mut updates: Vec<CarUpdate> = Vec::with_capacity(agents.len());
@@ -326,97 +320,22 @@ impl SimWorld {
                 }
             }
 
-            let accel_current = idm_acceleration(&car.idm_params, car.speed, gap, delta_v);
+            let accel_current = idm_acceleration(&car.idm, car.speed, gap, delta_v);
             let (v_new, dx) = integrate_with_stopping_guard(car.speed, accel_current, dt);
 
-            // MOBIL lane-change evaluation for cars NOT currently in a lane change.
-            let mut start_lc: Option<(u8, f64)> = None;
-            if !car.has_lane_change && !at_red {
-                // Edge properties for lane count and length.
-                let edge = EdgeIndex::new(car.rp.edge_index as usize);
-                let (lane_count, edge_length) = self
-                    .road_graph
-                    .inner()
-                    .edge_weight(edge)
-                    .map(|e| (e.lane_count, e.length_m))
-                    .unwrap_or((1, 100.0));
-
-                // Skip MOBIL near edges of the road segment (start/end proximity).
-                let safe_zone = car.rp.offset_m >= 5.0
-                    && car.rp.offset_m <= edge_length - 20.0
-                    && lane_count > 1;
-
-                // Cooldown check: 3s since last lane change completion.
-                let cooldown_ok = self
-                    .world
-                    .query_one_mut::<&LastLaneChange>(car.entity)
-                    .ok()
-                    .map(|llc| sim_time - llc.completed_at > 3.0)
-                    .unwrap_or(true);
-
-                if safe_zone && cooldown_ok {
-                    // Evaluate both left and right lane changes.
-                    let current_lane = car.rp.lane;
-                    let candidates: [(bool, i8); 2] = [
-                        (current_lane > 0, -1),          // right (lower index)
-                        (current_lane + 1 < lane_count, 1), // left (higher index)
-                    ];
-
-                    for (valid, dir) in &candidates {
-                        if !valid {
-                            continue;
-                        }
-                        let target_lane = (current_lane as i8 + dir) as u8;
-                        let is_right = *dir < 0;
-
-                        // Find leader and follower in target lane.
-                        let (tgt_leader_gap, tgt_leader_speed) =
-                            Self::find_leader_in_lane(
-                                car.rp.offset_m,
-                                car.rp.edge_index,
-                                target_lane,
-                                &edge_lane_agents,
-                                &speed_map,
-                            );
-                        let (tgt_follower_gap, tgt_follower_speed) =
-                            Self::find_follower_in_lane(
-                                car.rp.offset_m,
-                                car.rp.edge_index,
-                                target_lane,
-                                &edge_lane_agents,
-                                &speed_map,
-                            );
-
-                        let accel_target = idm_acceleration(
-                            &car.idm_params,
-                            car.speed,
-                            tgt_leader_gap,
-                            car.speed - tgt_leader_speed,
-                        );
-
-                        // New follower's decel if we insert in front of them.
-                        let accel_new_follower = idm_acceleration(
-                            &car.idm_params, // approximate: use subject's params
-                            tgt_follower_speed,
-                            tgt_follower_gap, // gap from follower to us
-                            tgt_follower_speed - car.speed,
-                        );
-
-                        let ctx = LaneChangeContext {
-                            accel_current,
-                            accel_target,
-                            accel_new_follower,
-                            accel_old_follower: 0.0, // simplification
-                            is_right,
-                        };
-
-                        if mobil_decision(&mobil_params, &ctx) {
-                            start_lc = Some((target_lane, sim_time));
-                            break; // take first accepted direction
-                        }
-                    }
-                }
-            }
+            // MOBIL lane-change evaluation.
+            let start_lc = if !at_red {
+                let ctx = CarMobilContext {
+                    entity: car.entity,
+                    rp: car.rp,
+                    speed: car.speed,
+                    idm_params: car.idm,
+                    has_lane_change: car.has_lc,
+                };
+                self.evaluate_mobil(&ctx, accel_current, &edge_lane_agents, &speed_map)
+            } else {
+                None
+            };
 
             updates.push(CarUpdate {
                 entity: car.entity,
@@ -429,92 +348,14 @@ impl SimWorld {
 
         // Apply updates.
         for upd in updates {
-            // Start new lane change if MOBIL decided.
             if let Some((target_lane, started_at)) = upd.start_lane_change {
-                let current_lane = self
-                    .world
-                    .query_one_mut::<&RoadPosition>(upd.entity)
-                    .map(|rp| rp.lane)
-                    .unwrap_or(0);
-                let current_lateral = (current_lane as f64 + 0.5) * 3.5;
-
-                let _ = self.world.insert(
-                    upd.entity,
-                    (
-                        LaneChangeState {
-                            target_lane,
-                            time_remaining: 2.0,
-                            started_at,
-                        },
-                        LateralOffset {
-                            lateral_offset: current_lateral,
-                            desired_lateral: (target_lane as f64 + 0.5) * 3.5,
-                        },
-                    ),
-                );
+                self.start_lane_change(upd.entity, target_lane, started_at);
             }
-
             self.apply_vehicle_update(upd.entity, upd.v_new, upd.new_offset, upd.at_red);
         }
 
         // Process active lane changes: gradual drift + completion.
         self.process_car_lane_changes(dt);
-    }
-
-    /// Process gradual lateral drift for cars with active lane changes.
-    fn process_car_lane_changes(&mut self, dt: f64) {
-        struct DriftState {
-            entity: Entity,
-            target_lane: u8,
-            time_remaining: f64,
-            current_lateral: f64,
-            desired_lateral: f64,
-        }
-
-        let drifting: Vec<DriftState> = self
-            .world
-            .query_mut::<(Entity, &LaneChangeState, &LateralOffset, &VehicleType)>()
-            .into_iter()
-            .filter(|(_, _, _, vt)| **vt == VehicleType::Car)
-            .map(|(e, lcs, lat, _)| DriftState {
-                entity: e,
-                target_lane: lcs.target_lane,
-                time_remaining: lcs.time_remaining,
-                current_lateral: lat.lateral_offset,
-                desired_lateral: lat.desired_lateral,
-            })
-            .collect();
-
-        let sim_time = self.sim_time;
-
-        for drift in &drifting {
-            let new_time = drift.time_remaining - dt;
-
-            if new_time <= 0.0 {
-                // Drift complete: update lane, remove LaneChangeState and LateralOffset.
-                if let Ok(rp) = self.world.query_one_mut::<&mut RoadPosition>(drift.entity) {
-                    rp.lane = drift.target_lane;
-                }
-                let _ = self.world.remove::<(LaneChangeState, LateralOffset)>(drift.entity);
-                // Record completion time for cooldown.
-                let _ = self.world.insert_one(drift.entity, LastLaneChange {
-                    completed_at: sim_time,
-                });
-            } else {
-                // Linear drift toward target over remaining time.
-                let remaining_dist = drift.desired_lateral - drift.current_lateral;
-                let drift_speed = remaining_dist / drift.time_remaining;
-                let new_lateral = drift.current_lateral + drift_speed * dt;
-
-                if let Ok(lcs) = self.world.query_one_mut::<&mut LaneChangeState>(drift.entity) {
-                    lcs.time_remaining = new_time;
-                }
-                if let Ok(lat) = self.world.query_one_mut::<&mut LateralOffset>(drift.entity) {
-                    lat.lateral_offset = new_lateral;
-                }
-                self.apply_lateral_world_offset(drift.entity, new_lateral);
-            }
-        }
     }
 
     /// Step motorbike agents with sublane lateral positioning.
