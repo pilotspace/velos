@@ -2,14 +2,35 @@
 
 use std::collections::HashMap;
 
-/// Traffic analysis zones for the District 1 POC area.
+/// Traffic analysis zones.
+///
+/// The `BenThanh..Waterfront` variants are sub-zones within District 1 for
+/// the POC. The `District1..BinhThanh` variants represent full-district zones
+/// for the 5-district HCMC simulation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Zone {
+    // District 1 sub-zones (POC).
     BenThanh,
     NguyenHue,
     Bitexco,
     BuiVien,
     Waterfront,
+
+    // 5-district zones.
+    District1,
+    District3,
+    District5,
+    District10,
+    BinhThanh,
+}
+
+/// Named zone descriptor used with ToD profiles.
+#[derive(Debug, Clone)]
+pub struct NamedZone {
+    /// Zone enum variant.
+    pub zone: Zone,
+    /// Human-readable name.
+    pub name: String,
 }
 
 /// Origin-Destination matrix storing zone-to-zone trip counts (trips per hour).
@@ -52,20 +73,12 @@ impl OdMatrix {
             .map(|(&(from, to), &count)| (from, to, count))
     }
 
-    /// Factory: District 1 POC OD matrix with 5 zones and realistic trip volumes.
+    /// Factory: District 1 POC OD matrix with 5 sub-zones and realistic trip volumes.
     ///
-    /// Models major pedestrian and vehicle flows in HCMC District 1:
-    /// - Ben Thanh Market hub (highest trip generation)
-    /// - Nguyen Hue Walking Street (tourist/commercial)
-    /// - Bitexco Financial Tower (office commuter)
-    /// - Bui Vien (backpacker/nightlife area)
-    /// - Waterfront (Saigon River promenade)
-    ///
-    /// Total: ~500 trips/hour across all OD pairs.
+    /// Total: ~560 trips/hour across all OD pairs.
     pub fn district1_poc() -> Self {
         let mut od = Self::new();
 
-        // Ben Thanh is the major hub -- highest trip generation
         od.set_trips(Zone::BenThanh, Zone::NguyenHue, 80);
         od.set_trips(Zone::NguyenHue, Zone::BenThanh, 75);
 
@@ -75,12 +88,67 @@ impl OdMatrix {
         od.set_trips(Zone::BuiVien, Zone::BenThanh, 55);
         od.set_trips(Zone::BenThanh, Zone::BuiVien, 50);
 
-        // Waterfront corridor
         od.set_trips(Zone::BuiVien, Zone::Waterfront, 60);
         od.set_trips(Zone::Waterfront, Zone::BuiVien, 55);
 
-        // Cross flows
         od.set_trips(Zone::NguyenHue, Zone::Waterfront, 50);
+
+        od
+    }
+
+    /// Factory: 5-district HCMC OD matrix with realistic inter-district flows.
+    ///
+    /// Produces 25 OD pairs (5x5 including intra-zone) with relative weights
+    /// based on HCMC district characteristics:
+    /// - District 1 (CBD) attracts the most commuters from all other districts
+    /// - Adjacent districts have higher cross-flows
+    /// - Intra-zone trips represent local circulation
+    ///
+    /// Base trips are per-hour at AM peak. Scale by ToD factor for other hours.
+    /// Total at factor=1.0: ~140,000 trips/hour (scales to ~280K at peak factor ~2.0).
+    pub fn hcmc_5district() -> Self {
+        let mut od = Self::new();
+
+        // Intra-zone trips (local circulation).
+        od.set_trips(Zone::District1, Zone::District1, 8_000);
+        od.set_trips(Zone::District3, Zone::District3, 6_000);
+        od.set_trips(Zone::District5, Zone::District5, 5_000);
+        od.set_trips(Zone::District10, Zone::District10, 7_000);
+        od.set_trips(Zone::BinhThanh, Zone::BinhThanh, 6_500);
+
+        // District 1 (CBD) -- strongest attractor.
+        // Inbound commuter flows.
+        od.set_trips(Zone::District3, Zone::District1, 12_000);
+        od.set_trips(Zone::District5, Zone::District1, 8_000);
+        od.set_trips(Zone::District10, Zone::District1, 10_000);
+        od.set_trips(Zone::BinhThanh, Zone::District1, 11_000);
+
+        // District 1 outbound (return flows, slightly lower).
+        od.set_trips(Zone::District1, Zone::District3, 10_000);
+        od.set_trips(Zone::District1, Zone::District5, 7_000);
+        od.set_trips(Zone::District1, Zone::District10, 8_500);
+        od.set_trips(Zone::District1, Zone::BinhThanh, 9_500);
+
+        // Adjacent district cross-flows.
+        // D3 <-> D10 (adjacent, strong flow).
+        od.set_trips(Zone::District3, Zone::District10, 4_500);
+        od.set_trips(Zone::District10, Zone::District3, 4_000);
+
+        // D3 <-> Binh Thanh (adjacent).
+        od.set_trips(Zone::District3, Zone::BinhThanh, 3_500);
+        od.set_trips(Zone::BinhThanh, Zone::District3, 3_000);
+
+        // D5 <-> D10 (adjacent).
+        od.set_trips(Zone::District5, Zone::District10, 3_000);
+        od.set_trips(Zone::District10, Zone::District5, 2_500);
+
+        // Distant cross-flows (weaker).
+        od.set_trips(Zone::District5, Zone::District3, 2_000);
+        od.set_trips(Zone::District3, Zone::District5, 1_800);
+        od.set_trips(Zone::District5, Zone::BinhThanh, 1_500);
+        od.set_trips(Zone::BinhThanh, Zone::District5, 1_200);
+        od.set_trips(Zone::District10, Zone::BinhThanh, 2_500);
+        od.set_trips(Zone::BinhThanh, Zone::District10, 2_000);
 
         od
     }
@@ -115,7 +183,13 @@ mod tests {
     fn district1_poc_total_in_range() {
         let od = OdMatrix::district1_poc();
         let total = od.total_trips();
-        // 80+75+70+65+55+50+60+55+50 = 560
         assert_eq!(total, 560);
+    }
+
+    #[test]
+    fn hcmc_5district_has_25_pairs() {
+        let od = OdMatrix::hcmc_5district();
+        let pair_count = od.zone_pairs().count();
+        assert!(pair_count >= 20);
     }
 }

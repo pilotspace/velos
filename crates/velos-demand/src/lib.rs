@@ -10,6 +10,6 @@ pub mod spawner;
 pub mod tod_profile;
 
 pub use error::DemandError;
-pub use od_matrix::{OdMatrix, Zone};
+pub use od_matrix::{NamedZone, OdMatrix, Zone};
 pub use spawner::{SpawnRequest, SpawnVehicleType, Spawner};
 pub use tod_profile::TodProfile;
