@@ -54,7 +54,15 @@ Plans:
   3. Pedestrian simulation at varying densities shows GPU workgroup adaptation (sparse areas use fewer threads, dense areas use more) with measurable speedup over uniform dispatch
   4. Agents approaching a speed limit sign visibly reduce to the posted speed, and agents at a no-turn restriction do not attempt the restricted maneuver
   5. Peripheral network zones run mesoscopic queue model (O(1) per edge) while core zones remain microscopic, with agents transitioning smoothly through 100m buffer zones without speed discontinuities
-**Plans**: TBD
+**Plans:** 7 plans
+Plans:
+- [ ] 06-01-PLAN.md -- GpuAgentState expansion (32->40 bytes) + VehicleType extension + new agent type params
+- [ ] 06-02-PLAN.md -- Bus agents with dwell model + GTFS import for HCMC bus routes
+- [ ] 06-03-PLAN.md -- Actuated + adaptive signal controllers with loop detectors
+- [ ] 06-04-PLAN.md -- Emergency vehicle yield behavior + GPU shader branching
+- [ ] 06-05-PLAN.md -- V2I: SPaT broadcast, signal priority, traffic signs
+- [ ] 06-06-PLAN.md -- Pedestrian adaptive GPU workgroups with prefix-sum compaction
+- [ ] 06-07-PLAN.md -- Meso-micro hybrid: velos-meso crate with BPR queue model + buffer zones
 
 ### Phase 7: Intelligence, Routing & Prediction
 **Goal**: Agents make intelligent route choices using predicted future conditions, reroute dynamically around congestion, and exhibit profile-driven behavior differences
@@ -80,5 +88,5 @@ Phases 5 through 7 execute sequentially. Each phase depends on the prior phase.
 | 3. Motorbike Sublane & Pedestrians | v1.0 | 2/2 | Complete | 2026-03-07 |
 | 4. MOBIL Wiring + Motorbike Jam Fix + Performance | v1.0 | 3/3 | Complete | 2026-03-07 |
 | 5. Foundation & GPU Engine | v1.1 | 5/6 | Gap closure | - |
-| 6. Agent Models & Signal Control | v1.1 | 0/0 | Not started | - |
+| 6. Agent Models & Signal Control | v1.1 | 0/7 | Planned | - |
 | 7. Intelligence, Routing & Prediction | v1.1 | 0/0 | Not started | - |

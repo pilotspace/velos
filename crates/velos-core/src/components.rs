@@ -25,10 +25,24 @@ pub struct Kinematics {
 }
 
 /// Vehicle type tag for an agent in the ECS.
+///
+/// GPU mapping: 0=Motorbike, 1=Car, 2=Bus, 3=Bicycle, 4=Truck, 5=Emergency, 6=Pedestrian.
+/// Order must match VehicleType in velos-vehicle and WGSL constants in wave_front.wgsl.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum VehicleType {
+    /// Two-wheeled motorbike (dominant in HCMC, ~80% of traffic). GPU=0.
     Motorbike,
+    /// Four-wheeled car (~15% of traffic). GPU=1.
     Car,
+    /// Public transit bus. GPU=2.
+    Bus,
+    /// Bicycle (pedal-powered, uses sublane model). GPU=3.
+    Bicycle,
+    /// Heavy goods vehicle / truck. GPU=4.
+    Truck,
+    /// Emergency vehicle (ambulance, fire truck). GPU=5.
+    Emergency,
+    /// Pedestrian agent (~5% of traffic). GPU=6.
     Pedestrian,
 }
 
@@ -109,7 +123,7 @@ pub enum CarFollowingModel {
 /// GPU-side agent state packed for compute shader buffers.
 ///
 /// All position and speed fields use fixed-point integer representation
-/// for cross-GPU determinism. Layout is `#[repr(C)]` with 32 bytes total
+/// for cross-GPU determinism. Layout is `#[repr(C)]` with 40 bytes total
 /// for cache-aligned GPU access.
 ///
 /// Field formats:
@@ -119,6 +133,8 @@ pub enum CarFollowingModel {
 /// - `acceleration`: Q12.20 fixed-point (m/s^2)
 /// - `cf_model`: 0 = IDM, 1 = Krauss (matches [`CarFollowingModel`] discriminant)
 /// - `rng_state`: PCG hash state for Krauss dawdle stochastic component
+/// - `vehicle_type`: 0=Motorbike, 1=Car, 2=Bus, 3=Bicycle, 4=Truck, 5=Emergency, 6=Pedestrian
+/// - `flags`: bitfield -- bit0=at_bus_stop, bit1=emergency_active, bit2=yielding
 #[repr(C)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct GpuAgentState {
@@ -138,4 +154,10 @@ pub struct GpuAgentState {
     pub cf_model: u32,
     /// RNG state for stochastic models (PCG hash seed).
     pub rng_state: u32,
+    /// Vehicle type tag (matches VehicleType enum order).
+    /// 0=Motorbike, 1=Car, 2=Bus, 3=Bicycle, 4=Truck, 5=Emergency, 6=Pedestrian.
+    pub vehicle_type: u32,
+    /// Bitfield flags for agent state.
+    /// bit0=at_bus_stop, bit1=emergency_active, bit2=yielding.
+    pub flags: u32,
 }
