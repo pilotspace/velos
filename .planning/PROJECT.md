@@ -35,7 +35,9 @@ Motorbikes move realistically through traffic using continuous sublane positioni
 
 ### Active
 
-(Empty -- define with `/gsd:new-milestone`)
+<!-- v1.1 Digital Twin Platform -- Full v2 architecture implementation -->
+
+(Defined in REQUIREMENTS.md)
 
 ### Out of Scope
 
@@ -117,5 +119,20 @@ Initial visual verification confirmed motorbike filtering, swarming, dispersal, 
 | Spatial query radius 6m + 20-neighbor cap | Prevents O(n^2) at density; heading filter prevents deadlocks | Good |
 | Linear drift over 2s for lane changes | Simple, visually smooth, no complex interpolation needed | Good |
 
+## Current Milestone: v1.1 Digital Twin Platform
+
+**Goal:** Implement the full v2 architecture -- scale to 280K agents across 5 HCMC districts with multi-GPU compute, CCH routing, prediction ensemble, deck.gl/CesiumJS web visualization, gRPC/REST API, calibration, data exports, and Docker deployment.
+
+**Target features:**
+- Multi-GPU wave-front dispatch with fixed-point arithmetic (01-simulation-engine)
+- All agent models: motorbike sublane, IDM, MOBIL, pedestrian adaptive workgroups, bus dwell, meso-micro hybrid (02-agent-models)
+- CCH dynamic pathfinding with prediction ensemble (BPR+ETS+historical) (03-routing-prediction)
+- 5-district HCMC data pipeline: OSM import, signal inference, demand profiles, calibration data (04-data-pipeline-hcmc)
+- deck.gl 2D + CesiumJS 3D visualization, WebSocket scaling, gRPC/REST API (05-visualization-api)
+- Docker Compose deployment, ECS checkpoints to Parquet, PMTiles, Prometheus/Grafana monitoring (06-infrastructure)
+- Scenario DSL, batch runner, MOE comparison (07-timeline-risks)
+- GEH/RMSE calibration with Bayesian optimization (velos-calibrate)
+- FCD, edge stats, emissions (HBEFA), Parquet/CSV/GeoJSON export (velos-output)
+
 ---
-*Last updated: 2026-03-07 after v1.0 milestone*
+*Last updated: 2026-03-07 after v1.1 milestone started*
