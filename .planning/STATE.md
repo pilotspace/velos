@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: SUMO Replacement Engine
 status: executing
-stopped_at: Completed 05-03-PLAN.md
-last_updated: "2026-03-07T12:25:42Z"
-last_activity: 2026-03-07 -- Completed Plan 05-03 (SUMO .net.xml and .rou.xml importers with 23 tests)
+stopped_at: Completed 05-02-PLAN.md
+last_updated: "2026-03-07T12:26:42Z"
+last_activity: 2026-03-07 -- Completed Plan 05-02 (5-district network cleaning + demand profiles)
 progress:
   total_phases: 3
   completed_phases: 0
-  total_plans: 3
-  completed_plans: 2
-  percent: 10
+  total_plans: 5
+  completed_plans: 3
+  percent: 15
 ---
 
 # Project State
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-03-07)
 Phase: 5 of 7 (Foundation & GPU Engine)
 Plan: 03 complete, ready for 04
 Status: Executing
-Last activity: 2026-03-07 -- Completed Plan 05-03 (SUMO .net.xml and .rou.xml importers)
+Last activity: 2026-03-07 -- Completed Plan 05-02 (5-district network cleaning + demand profiles)
 
 Progress: [#---------] 10%
 
@@ -49,6 +49,9 @@ Recent decisions affecting current work:
 - [05-03]: Streaming XML (quick-xml) for memory-efficient SUMO network parsing
 - [05-03]: SUMO amber phases merged into preceding green phase for velos-signal compatibility
 - [05-03]: RoadClass extended with Motorway, Trunk, Service for SUMO edge type coverage
+- [05-02]: postcard for binary graph serialization (compact, serde-native)
+- [05-02]: Service roads heuristically tagged motorbike-only (HCMC alleys)
+- [05-02]: Base OD matrix ~140K/hr scales to ~280K via ToD peak factor ~2.0x
 
 ### Pending Todos
 
@@ -64,6 +67,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-07T12:25:42Z
-Stopped at: Completed 05-03-PLAN.md
-Resume file: .planning/phases/05-foundation-gpu-engine/05-03-SUMMARY.md
+Last session: 2026-03-07T12:26:42Z
+Stopped at: Completed 05-02-PLAN.md
+Resume file: .planning/phases/05-foundation-gpu-engine/05-02-SUMMARY.md

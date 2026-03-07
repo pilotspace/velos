@@ -19,10 +19,10 @@ Prove VELOS can replace SUMO: reimplement all core SUMO features, add agent inte
 
 ### Network & Compatibility
 
-- [ ] **NET-01**: 5-district HCMC road network imported from OSM (Districts 1, 3, 5, 10, Binh Thanh, ~25K edges)
-- [ ] **NET-02**: Network cleaning: merge short edges <5m, remove disconnected components, lane count inference
-- [ ] **NET-03**: HCMC-specific OSM rules: one-way streets, U-turn points, motorbike-only lanes
-- [ ] **NET-04**: Time-of-day demand profiles: weekday AM/PM peak, off-peak, weekend across 5 districts
+- [x] **NET-01**: 5-district HCMC road network imported from OSM (Districts 1, 3, 5, 10, Binh Thanh, ~25K edges)
+- [x] **NET-02**: Network cleaning: merge short edges <5m, remove disconnected components, lane count inference
+- [x] **NET-03**: HCMC-specific OSM rules: one-way streets, U-turn points, motorbike-only lanes
+- [x] **NET-04**: Time-of-day demand profiles: weekday AM/PM peak, off-peak, weekend across 5 districts
 - [x] **NET-05**: SUMO .net.xml network import for compatibility with existing SUMO models
 - [x] **NET-06**: SUMO .rou.xml / .trips.xml demand file import
 
@@ -130,10 +130,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | GPU-04 | Phase 5 | Complete (05-01) |
 | GPU-05 | Phase 5 | Pending |
 | GPU-06 | Phase 5 | Pending |
-| NET-01 | Phase 5 | Pending |
-| NET-02 | Phase 5 | Pending |
-| NET-03 | Phase 5 | Pending |
-| NET-04 | Phase 5 | Pending |
+| NET-01 | Phase 5 | Complete |
+| NET-02 | Phase 5 | Complete |
+| NET-03 | Phase 5 | Complete |
+| NET-04 | Phase 5 | Complete |
 | NET-05 | Phase 5 | Complete |
 | NET-06 | Phase 5 | Complete |
 | CFM-01 | Phase 5 | Complete (05-01) |
