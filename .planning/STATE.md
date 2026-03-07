@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: SUMO Replacement Engine
-status: active
-stopped_at: null
-last_updated: "2026-03-07T18:00:00.000Z"
-last_activity: "2026-03-07 -- Roadmap created for v1.1 (3 phases, 39 requirements)"
+status: executing
+stopped_at: Completed 05-01-PLAN.md
+last_updated: "2026-03-07T12:18:29Z"
+last_activity: 2026-03-07 -- Completed Plan 05-01 (fixed-point types, Krauss model, CarFollowingModel enum)
 progress:
   total_phases: 3
   completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
-  percent: 0
+  total_plans: 1
+  completed_plans: 1
+  percent: 5
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-03-07)
 ## Current Position
 
 Phase: 5 of 7 (Foundation & GPU Engine)
-Plan: --
-Status: Ready to plan
-Last activity: 2026-03-07 -- Roadmap recreated for v1.1 SUMO Replacement Engine (3 phases, 39 requirements)
+Plan: 01 complete, ready for 02
+Status: Executing
+Last activity: 2026-03-07 -- Completed Plan 05-01 (fixed-point types, Krauss model, CarFollowingModel enum)
 
-Progress: [----------] 0%
+Progress: [#---------] 5%
 
 ## Accumulated Context
 
@@ -43,6 +43,9 @@ Recent decisions affecting current work:
 - [v1.1 Roadmap]: Coarse granularity -- 3 phases (5-7) covering 39 requirements across GPU engine, agents/signals, and intelligence/routing
 - [v1.1 Roadmap]: Phases are strictly sequential (5 -> 6 -> 7) -- intelligence/routing needs agent models and signals to exist first
 - [v1.1 Roadmap]: egui desktop app retained for dev visualization -- no web dashboard this milestone
+- [05-01]: Fixed-point types use wrapping arithmetic to match GPU u32 wrapping semantics
+- [05-01]: CarFollowingModel enum variant named Idm (not IDM) per Rust naming conventions
+- [05-01]: GpuAgentState acceleration uses Q12.20 (same as speed) for consistency
 
 ### Pending Todos
 
@@ -58,6 +61,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-07
-Stopped at: Roadmap created for v1.1 SUMO Replacement Engine, ready to plan Phase 5
-Resume file: none
+Last session: 2026-03-07T12:18:29Z
+Stopped at: Completed 05-01-PLAN.md
+Resume file: .planning/phases/05-foundation-gpu-engine/05-01-SUMMARY.md

@@ -13,7 +13,7 @@ Prove VELOS can replace SUMO: reimplement all core SUMO features, add agent inte
 - [ ] **GPU-01**: Simulation physics runs on GPU compute pipeline (not CPU) as the primary execution path
 - [ ] **GPU-02**: GPU spatial partitioning via METIS k-way graph partitioning across multiple adapters
 - [ ] **GPU-03**: Per-lane wave-front (Gauss-Seidel) dispatch replaces simple parallel dispatch
-- [ ] **GPU-04**: Fixed-point arithmetic (Q16.16 position, Q12.20 speed, Q8.8 lateral) for cross-GPU determinism
+- [x] **GPU-04**: Fixed-point arithmetic (Q16.16 position, Q12.20 speed, Q8.8 lateral) for cross-GPU determinism
 - [ ] **GPU-05**: Boundary agent protocol (outbox/inbox staging buffers) for multi-GPU agent transfers
 - [ ] **GPU-06**: System sustains 280K agents at 10 steps/sec real-time on 2-4 GPUs
 
@@ -28,8 +28,8 @@ Prove VELOS can replace SUMO: reimplement all core SUMO features, add agent inte
 
 ### Car-Following Models
 
-- [ ] **CFM-01**: Krauss car-following model (SUMO default) with safe-speed and dawdle behavior
-- [ ] **CFM-02**: Runtime-selectable car-following model per agent type (IDM or Krauss via ECS component)
+- [x] **CFM-01**: Krauss car-following model (SUMO default) with safe-speed and dawdle behavior
+- [x] **CFM-02**: Runtime-selectable car-following model per agent type (IDM or Krauss via ECS component)
 
 ### Agent Models
 
@@ -127,7 +127,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | GPU-01 | Phase 5 | Pending |
 | GPU-02 | Phase 5 | Pending |
 | GPU-03 | Phase 5 | Pending |
-| GPU-04 | Phase 5 | Pending |
+| GPU-04 | Phase 5 | Complete (05-01) |
 | GPU-05 | Phase 5 | Pending |
 | GPU-06 | Phase 5 | Pending |
 | NET-01 | Phase 5 | Pending |
@@ -136,8 +136,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | NET-04 | Phase 5 | Pending |
 | NET-05 | Phase 5 | Pending |
 | NET-06 | Phase 5 | Pending |
-| CFM-01 | Phase 5 | Pending |
-| CFM-02 | Phase 5 | Pending |
+| CFM-01 | Phase 5 | Complete (05-01) |
+| CFM-02 | Phase 5 | Complete (05-01) |
 | AGT-01 | Phase 6 | Pending |
 | AGT-02 | Phase 6 | Pending |
 | AGT-03 | Phase 6 | Pending |
