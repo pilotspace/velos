@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: SUMO Replacement Engine
 status: completed
-stopped_at: Completed 06-05-PLAN.md
-last_updated: "2026-03-07T14:53:34.680Z"
-last_activity: 2026-03-07 -- Completed Plan 06-05 (V2I communication and traffic signs)
+stopped_at: Completed 06-06-PLAN.md
+last_updated: "2026-03-07T14:57:03.663Z"
+last_activity: 2026-03-07 -- Completed Plan 06-06 (Pedestrian adaptive GPU workgroups)
 progress:
   total_phases: 3
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 13
-  completed_plans: 12
+  completed_plans: 13
   percent: 85
 ---
 
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-03-07)
 Phase: 6 of 7 (Agent Models & Signal Control) -- IN PROGRESS
 Plan: 07 complete -- Mesoscopic queue model
 Status: Plan 06-07 complete, phase 6 complete
-Last activity: 2026-03-07 -- Completed Plan 06-05 (V2I communication and traffic signs)
+Last activity: 2026-03-07 -- Completed Plan 06-06 (Pedestrian adaptive GPU workgroups)
 
 Progress: [█████████░] 85%
 
@@ -82,6 +82,12 @@ Recent decisions affecting current work:
 - [Phase 06]: [06-05]: GLOSA minimum practical speed 3.0 m/s -- below this agent stops and waits
 - [Phase 06]: [06-05]: School zone time-window enforcement on CPU; GPU always applies reduced speed for signs in buffer
 - [Phase 06]: [06-05]: Sign buffer at binding 6, WaveFrontParams extended to 32 bytes with sign_count and sim_time
+- [06-06]: Separate PedestrianAdaptivePipeline module (ped_adaptive.rs) for file size compliance
+- [06-06]: Hillis-Steele reduce-then-scan for portable multi-workgroup prefix sum on Metal/Vulkan
+- [06-06]: Workgroup size 256 for compute passes, 64 for social force (per architecture doc)
+- [06-06]: bgl_entry made pub(crate) for cross-module pipeline sharing
+- [Phase 06]: [06-06]: Separate PedestrianAdaptivePipeline module for file size compliance
+- [Phase 06]: [06-06]: Hillis-Steele reduce-then-scan for portable multi-workgroup prefix sum
 
 ### Pending Todos
 
@@ -96,6 +102,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-07T14:53:34.678Z
-Stopped at: Completed 06-05-PLAN.md
+Last session: 2026-03-07T14:56:59.122Z
+Stopped at: Completed 06-06-PLAN.md
 Resume file: None
