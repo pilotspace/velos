@@ -19,7 +19,7 @@
 
 ### v1.1 SUMO Replacement Engine
 
-- [x] **Phase 5: Foundation & GPU Engine** - God Crate decomposition, GPU physics cutover, multi-GPU wave-front dispatch, fixed-point arithmetic, 5-district HCMC network, SUMO file imports, Krauss car-following model (completed 2026-03-07)
+- [ ] **Phase 5: Foundation & GPU Engine** - God Crate decomposition, GPU physics cutover, multi-GPU wave-front dispatch, fixed-point arithmetic, 5-district HCMC network, SUMO file imports, Krauss car-following model (gap closure in progress)
 - [ ] **Phase 6: Agent Models & Signal Control** - All agent types at scale (bus, bicycle, truck, emergency), pedestrian adaptive workgroups, meso-micro hybrid, actuated/adaptive signals, V2I communication, traffic signs
 - [ ] **Phase 7: Intelligence, Routing & Prediction** - Agent intelligence (multi-factor cost, profiles, GPU perception/evaluation), CCH routing, prediction ensemble, staggered reroute, global knowledge routing
 
@@ -35,13 +35,14 @@
   3. Loading the 5-district HCMC network produces a cleaned graph with ~25K edges, correct one-way streets, motorbike-only lanes, and no disconnected components
   4. Importing a SUMO .net.xml file produces the same road graph as OSM import for an equivalent area, and .rou.xml demand files spawn agents on correct routes
   5. Switching an agent between Krauss and IDM car-following at runtime produces visibly different driving behavior (Krauss dawdles, IDM maintains desired speed)
-**Plans:** 5/5 plans complete
+**Plans:** 6 plans (5 complete, 1 gap closure)
 Plans:
 - [x] 05-01-PLAN.md -- Fixed-point types + Krauss car-following + CarFollowingModel ECS component
 - [x] 05-02-PLAN.md -- 5-district HCMC network import + cleaning pipeline + ToD demand profiles
 - [x] 05-03-PLAN.md -- SUMO .net.xml and .rou.xml file import compatibility
 - [x] 05-04-PLAN.md -- GPU wave-front dispatch + physics cutover (IDM+Krauss shader)
 - [x] 05-05-PLAN.md -- Multi-GPU partitioning + boundary protocol + 280K benchmark
+- [ ] 05-06-PLAN.md -- Gap closure: wire CarFollowingModel into agent spawning + verify GPU behavior differentiation
 
 ### Phase 6: Agent Models & Signal Control
 **Goal**: Every vehicle and pedestrian type operates at GPU scale with realistic behavior, signals respond to traffic demand, and agents interact with V2I infrastructure
@@ -78,6 +79,6 @@ Phases 5 through 7 execute sequentially. Each phase depends on the prior phase.
 | 2. Road Network & Vehicle Models + egui | v1.0 | 4/4 | Complete | 2026-03-07 |
 | 3. Motorbike Sublane & Pedestrians | v1.0 | 2/2 | Complete | 2026-03-07 |
 | 4. MOBIL Wiring + Motorbike Jam Fix + Performance | v1.0 | 3/3 | Complete | 2026-03-07 |
-| 5. Foundation & GPU Engine | v1.1 | 5/5 | Complete | 2026-03-07 |
+| 5. Foundation & GPU Engine | v1.1 | 5/6 | Gap closure | - |
 | 6. Agent Models & Signal Control | v1.1 | 0/0 | Not started | - |
 | 7. Intelligence, Routing & Prediction | v1.1 | 0/0 | Not started | - |
