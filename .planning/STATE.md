@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: SUMO Replacement Engine
 status: executing
-stopped_at: Completed 05-05-PLAN.md (Phase 5 complete)
-last_updated: "2026-03-07T13:05:09Z"
-last_activity: 2026-03-07 -- Completed Plan 05-05 (Multi-GPU partitioning + 280K benchmark) -- Phase 5 complete
+stopped_at: Completed 05-06-PLAN.md (Phase 5 gap closure complete)
+last_updated: "2026-03-07T13:37:15Z"
+last_activity: 2026-03-07 -- Completed Plan 05-06 (CarFollowingModel spawn wiring gap closure)
 progress:
   total_phases: 3
   completed_phases: 1
-  total_plans: 5
-  completed_plans: 5
+  total_plans: 6
+  completed_plans: 6
   percent: 33
 ---
 
@@ -26,9 +26,9 @@ See: .planning/PROJECT.md (updated 2026-03-07)
 ## Current Position
 
 Phase: 5 of 7 (Foundation & GPU Engine) -- COMPLETE
-Plan: 05 of 05 complete -- Phase 5 finished
+Plan: 06 of 06 complete -- Phase 5 finished (incl. gap closure)
 Status: Phase 5 complete, ready for Phase 6
-Last activity: 2026-03-07 -- Completed Plan 05-05 (Multi-GPU partitioning + 280K benchmark)
+Last activity: 2026-03-07 -- Completed Plan 05-06 (CarFollowingModel spawn wiring gap closure)
 
 Progress: [███-------] 33%
 
@@ -58,6 +58,8 @@ Recent decisions affecting current work:
 - [05-05]: BFS-based balanced bisection fallback for METIS (libmetis vendored build fails on macOS)
 - [05-05]: Logical partitions on single GPU validate boundary protocol without multi-adapter
 - [05-05]: PartitionMode enum (Single/Multi) preserves backward compatibility on SimWorld
+- [05-06]: RNG-based 30/70 Krauss/IDM assignment for cars; demand-config-driven assignment deferred to Phase 6
+- [05-06]: Motorbikes always IDM (sublane model is IDM-based); pedestrians excluded from CarFollowingModel
 
 ### Pending Todos
 
@@ -65,13 +67,13 @@ None.
 
 ### Blockers/Concerns
 
-- cf_model differentiation gap: agents behave identically regardless of IDM/Krauss -- shader branching or cf_model assignment issue. Track for Phase 6.
+- ~~cf_model differentiation gap~~ RESOLVED in 05-06: CarFollowingModel now attached at spawn; GPU shader confirmed producing 92.8% speed difference between Krauss and IDM agents.
 - No Rust CCH crate exists -- Phase 7 requires custom implementation (2-3 weeks estimated)
 - Meso-micro hybrid (AGT-05/AGT-06) may be unnecessary if full-micro handles 280K within 15ms frame time
 - Multi-GPU boundary protocol validated with logical partitions; physical multi-adapter untested (wgpu Spike S2 still needed)
 
 ## Session Continuity
 
-Last session: 2026-03-07T13:05:09Z
-Stopped at: Completed 05-05-PLAN.md (Phase 5 complete)
-Resume file: .planning/phases/05-foundation-gpu-engine/05-05-SUMMARY.md
+Last session: 2026-03-07T13:37:15Z
+Stopped at: Completed 05-06-PLAN.md (Phase 5 gap closure complete)
+Resume file: .planning/phases/05-foundation-gpu-engine/05-06-SUMMARY.md
