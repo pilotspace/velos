@@ -23,8 +23,8 @@ Prove VELOS can replace SUMO: reimplement all core SUMO features, add agent inte
 - [ ] **NET-02**: Network cleaning: merge short edges <5m, remove disconnected components, lane count inference
 - [ ] **NET-03**: HCMC-specific OSM rules: one-way streets, U-turn points, motorbike-only lanes
 - [ ] **NET-04**: Time-of-day demand profiles: weekday AM/PM peak, off-peak, weekend across 5 districts
-- [ ] **NET-05**: SUMO .net.xml network import for compatibility with existing SUMO models
-- [ ] **NET-06**: SUMO .rou.xml / .trips.xml demand file import
+- [x] **NET-05**: SUMO .net.xml network import for compatibility with existing SUMO models
+- [x] **NET-06**: SUMO .rou.xml / .trips.xml demand file import
 
 ### Car-Following Models
 
@@ -134,8 +134,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | NET-02 | Phase 5 | Pending |
 | NET-03 | Phase 5 | Pending |
 | NET-04 | Phase 5 | Pending |
-| NET-05 | Phase 5 | Pending |
-| NET-06 | Phase 5 | Pending |
+| NET-05 | Phase 5 | Complete |
+| NET-06 | Phase 5 | Complete |
 | CFM-01 | Phase 5 | Complete (05-01) |
 | CFM-02 | Phase 5 | Complete (05-01) |
 | AGT-01 | Phase 6 | Pending |
