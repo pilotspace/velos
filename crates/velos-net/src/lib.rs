@@ -11,6 +11,7 @@ pub mod osm_import;
 pub mod projection;
 pub mod routing;
 pub mod spatial;
+#[allow(dead_code, clippy::collapsible_if)]
 pub mod sumo_import;
 
 pub use cleaning::{clean_network, CleaningConfig, CleaningReport, OverrideFile};

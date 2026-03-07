@@ -36,6 +36,8 @@ fn build_diamond_graph() -> RoadGraph {
             oneway: true,
             road_class: RoadClass::Primary,
             geometry: vec![a, b],
+            motorbike_only: false,
+            time_windows: None,
         }
     };
 
@@ -97,6 +99,8 @@ fn path_cost_is_travel_time() {
             oneway: true,
             road_class: RoadClass::Residential,
             geometry: vec![[0.0, 0.0], [100.0, 0.0]],
+            motorbike_only: false,
+            time_windows: None,
         },
     );
     let graph = RoadGraph::new(g);

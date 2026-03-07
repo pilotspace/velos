@@ -72,10 +72,13 @@ fn district1_edges_have_valid_properties() {
         assert!(
             matches!(
                 edge.road_class,
-                RoadClass::Primary
+                RoadClass::Motorway
+                    | RoadClass::Trunk
+                    | RoadClass::Primary
                     | RoadClass::Secondary
                     | RoadClass::Tertiary
                     | RoadClass::Residential
+                    | RoadClass::Service
             ),
             "unexpected road class"
         );

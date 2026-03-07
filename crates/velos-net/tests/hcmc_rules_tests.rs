@@ -103,7 +103,8 @@ fn time_dependent_oneway_edges_applied() {
 
     // After cleaning with HCMC rules, time-dependent one-ways should be applied
     // (at least the step runs without error).
-    assert!(report.time_dependent_applied >= 0);
+    // The step runs without error (time_dependent_applied is 0 until real HCMC data loaded).
+    let _ = report.time_dependent_applied;
 }
 
 #[test]

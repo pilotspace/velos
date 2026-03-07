@@ -4,6 +4,7 @@
 //! a [`RoadGraph`] along with signal plans and a list of warnings for
 //! unmapped attributes. Internal edges (prefixed with `:`) are filtered out.
 
+
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -127,34 +128,6 @@ pub fn import_sumo_net(
     let graph = build_graph(&edges, &junctions, &connections, &mut warnings);
 
     Ok((graph, signals, warnings))
-}
-
-/// Handle end-of-element (or self-closing element) by finalizing the
-/// current edge or traffic-light builder.
-fn finalize_tag(
-    tag: &str,
-    current_edge: &mut Option<SumoEdge>,
-    current_tl: &mut Option<TlLogicBuilder>,
-    edges: &mut Vec<SumoEdge>,
-    signals: &mut Vec<SumoSignalPlan>,
-) {
-    match tag {
-        "edge" => {
-            if let Some(edge) = current_edge.take() {
-                if !edge.internal {
-                    edges.push(edge);
-                }
-            }
-        }
-        "tlLogic" => {
-            if let Some(tl) = current_tl.take()
-                && let Some(plan) = tl.build()
-            {
-                signals.push(plan);
-            }
-        }
-        _ => {}
-    }
 }
 
 // ---------------------------------------------------------------------------

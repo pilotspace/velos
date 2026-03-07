@@ -1,0 +1,13 @@
+# HCMC OSM Override File
+# Corrections to OSM data for edges/junctions where OSM is wrong or incomplete.
+# Each override documents the reasoning for traceability.
+#
+# Format:
+# [[edge_override]]
+# osm_way_id = "way/123456"
+# lanes = 3
+# speed_limit_kmh = 40.0
+# motorbike_only = false
+# reason = "Field survey shows 3 lanes, OSM has 2"
+#
+# Add overrides below as discrepancies are discovered during calibration.
