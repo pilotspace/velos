@@ -1,136 +1,112 @@
-# Requirements: VELOS
+# Requirements: VELOS v1.1 Digital Twin Platform
 
-**Defined:** 2026-03-06
+**Defined:** 2026-03-07
 **Core Value:** Motorbikes move realistically through traffic using continuous sublane positioning -- not forced into discrete lanes like Western traffic models
 
-## v1 Requirements
+## v1.1 Requirements
 
-Requirements for initial release. Each maps to roadmap phases.
+Requirements for the full v2 architecture implementation. Each maps to roadmap phases.
 
-### GPU Compute & Foundation
+### GPU Engine & Scale
 
-- [x] **GPU-01**: GPU compute pipeline dispatches agent position/velocity updates each timestep via wgpu/Metal compute shaders using simple parallel dispatch
-- [x] **GPU-02**: f64 arithmetic on CPU, f32 in WGSL shaders. No fixed-point types for POC
-- [x] **GPU-03**: hecs ECS stores agent state as components, projected to SoA GPU buffers each frame via queue.write_buffer() with entity-to-GPU index mapping
-- [x] **GPU-04**: CFL numerical stability check validates dt * max_speed < cell_size before each simulation step
+- [ ] **GPU-01**: Simulation physics runs on GPU compute pipeline (not CPU) as the primary execution path
+- [ ] **GPU-02**: GPU spatial partitioning via METIS k-way graph partitioning across multiple adapters
+- [ ] **GPU-03**: Per-lane wave-front (Gauss-Seidel) dispatch replaces simple parallel dispatch
+- [ ] **GPU-04**: Fixed-point arithmetic (Q16.16 position, Q12.20 speed, Q8.8 lateral) for cross-GPU determinism
+- [ ] **GPU-05**: Boundary agent protocol (outbox/inbox staging buffers) for multi-GPU agent transfers
+- [ ] **GPU-06**: System sustains 280K agents at 10 steps/sec real-time on 2-4 GPUs
 
-### Rendering
+### Network & Data
 
-- [x] **REN-01**: winit native macOS window hosts wgpu render surface with compute and render sharing the same device
-- [x] **REN-02**: GPU-instanced 2D renderer draws styled agent shapes (triangles for motorbikes, rectangles for cars, dots for pedestrians) with direction arrows
-- [x] **REN-03**: Zoom/pan camera controls, visible road lanes, intersection areas marked
-- [x] **REN-04**: One instanced draw call per vehicle type for rendering performance
+- [ ] **NET-01**: 5-district HCMC road network imported from OSM (Districts 1, 3, 5, 10, Binh Thanh, ~25K edges)
+- [ ] **NET-02**: Network cleaning: merge short edges <5m, remove disconnected components, lane count inference
+- [ ] **NET-03**: HCMC-specific OSM rules: one-way streets, U-turn points, motorbike-only lanes
+- [ ] **NET-04**: Time-of-day demand profiles: weekday AM/PM peak, off-peak, weekend across 5 districts
 
-### Vehicle Models
+### Routing & Prediction
 
-- [x] **VEH-01**: IDM car-following model adjusts each agent's speed based on gap to leader with ballistic stopping guard preventing negative velocities
-- [x] **VEH-02**: MOBIL lane-change model evaluates lane-change benefit vs politeness threshold (0.3 for HCMC) for car agents
-- [x] **VEH-03**: Motorbike sublane model uses continuous lateral position enabling filtering between cars, red-light clustering, and swarm behavior
-- [x] **VEH-04**: Pedestrian basic social force model (repulsion from other agents + attraction to destination), including jaywalking probability (0.3 for HCMC)
+- [ ] **RTE-01**: CCH (Customizable Contraction Hierarchies) replaces A* for pathfinding on 25K-edge network
+- [ ] **RTE-02**: CCH supports 3ms dynamic weight customization without full re-contraction
+- [ ] **RTE-03**: Dynamic agent rerouting at 500 reroutes/step using CCH queries (0.02ms/query)
+- [ ] **RTE-04**: BPR + ETS + historical prediction ensemble runs in-process every 60 sim-seconds
+- [ ] **RTE-05**: Prediction overlay uses ArcSwap for zero-copy, lock-free weight updates to CCH
 
-### Road Network
+### Agent Models
 
-- [x] **NET-01**: OSM importer parses OpenStreetMap PBF data for a small HCMC area into a directed road graph with lane counts, speed limits, and one-way rules
-- [x] **NET-02**: rstar R-tree spatial index enables fast neighbor queries (all agents within X meters) for car-following, lane-change, and motorbike gap detection
-- [x] **NET-03**: Fixed-time traffic signal controller manages green/red/amber phases per intersection approach with configurable timing
-- [x] **NET-04**: Edge-local to world coordinate transform system for rendering
+- [ ] **AGT-01**: Bus agents with empirical dwell time model (5s + 0.5s/boarding + 0.67s/alighting, cap 60s)
+- [ ] **AGT-02**: GTFS import for 130 HCMC bus routes with stop locations and schedules
+- [ ] **AGT-03**: Bicycle agents with sublane model (rightmost position, IDM v0=15km/h)
+- [ ] **AGT-04**: Pedestrian adaptive GPU workgroups with prefix-sum compaction (3-8x speedup)
+- [ ] **AGT-05**: Meso-micro hybrid with 100m graduated buffer zone and velocity-matching insertion
+- [ ] **AGT-06**: Mesoscopic queue model (O(1) per edge) for peripheral network zones
 
-### Routing
+### Web Platform & API
 
-- [x] **RTE-01**: A* pathfinding on petgraph provides shortest-path queries for agent route assignment
+- [ ] **API-01**: gRPC server (tonic) with ~20 RPC methods for simulation control, state queries, scenario management
+- [ ] **API-02**: REST gateway (axum) for HTTP clients with OpenAPI spec
+- [ ] **API-03**: WebSocket real-time streaming at 10Hz with spatial tiling (500m cells) for viewport subscription
+- [ ] **API-04**: FlatBuffers binary protocol for WebSocket agent position data (8 bytes/agent)
+- [ ] **API-05**: Redis pub/sub fan-out for multi-viewer WebSocket scaling (100+ concurrent)
 
-### Demand
+### Visualization
 
-- [x] **DEM-01**: OD matrix loader reads origin-destination trip tables defining volumes between traffic zones
-- [x] **DEM-02**: Time-of-day profiles shape demand across AM peak (7-9), PM peak (17-19), off-peak, and weekend patterns
-- [x] **DEM-03**: Agent spawner generates agents from OD+ToD data, assigns vehicle type (80% motorbike, 15% car, 5% pedestrian), and injects into network at origins
+- [ ] **VIZ-01**: deck.gl 2D dashboard: ScatterplotLayer (vehicles), HeatmapLayer (density), PathLayer (routes), IconLayer (signals)
+- [ ] **VIZ-02**: deck.gl renders 280K agents at 60 FPS using server-side binary attribute packing
+- [ ] **VIZ-03**: CesiumJS 3D visualization with OSM building extrusions and terrain
+- [ ] **VIZ-04**: PMTiles static map tiles served for base map layer (MapLibre GL JS)
+- [ ] **VIZ-05**: React/TypeScript dashboard with simulation controls, metrics panels, layer toggles
 
-### Gridlock Detection
+### Data & Calibration
 
-- [x] **GRID-01**: Gridlock detection system identifies and resolves circular waiting at intersections (speed=0 for >300s, configurable resolution: teleport/reroute/signal override)
+- [ ] **DAT-01**: ECS state checkpoint to Parquet (280K agents ~15MB compressed, rolling 10 checkpoints)
+- [ ] **DAT-02**: Checkpoint restore in <30s for 280K agents
+- [ ] **DAT-03**: FCD (Floating Car Data) export compatible with SUMO FCD format
+- [ ] **DAT-04**: Edge statistics export (flow, density, speed per edge per interval) in Parquet/CSV
+- [ ] **DAT-05**: GeoJSON export for GIS tools (QGIS, Mapbox)
 
-### Application UI
+### Calibration & Analysis
 
-- [x] **APP-01**: egui UI controls invoke simulation engine methods directly (start, stop, pause, speed adjustment, reset) via in-process function calls
-- [x] **APP-02**: egui dashboard panels display simulation controls, real-time metrics, and agent statistics
-
-### Metrics & Performance
-
-- [x] **PERF-01**: Frame time benchmark measures GPU dispatch + buffer readback duration per simulation step
-- [x] **PERF-02**: Agent throughput metric tracks agents processed per second and GPU utilization percentage
+- [ ] **CAL-01**: GEH statistic implementation with target GEH < 5 for 85%+ links
+- [ ] **CAL-02**: Bayesian optimization (argmin) for parameter tuning: OD scaling, IDM params, signal offsets
+- [ ] **CAL-03**: HBEFA 5.1 emissions modeling: per-agent per-step CO2, NOx, PM by vehicle type and speed
+- [ ] **SCN-01**: Scenario DSL (TOML/YAML): network mutations, demand variations, parameter overrides
+- [ ] **SCN-02**: Batch runner with parallel execution across different seeds
+- [ ] **SCN-03**: MOE comparison tables: throughput, mean delay, travel time index, queue length, LOS distribution
 
 ## v2 Requirements
 
 Deferred to future release. Tracked but not in current roadmap.
 
-### Fixed-Point & Determinism
+### Infrastructure
 
-- **FP-01**: Fixed-point arithmetic (Q16.16 position, Q12.20 speed, Q8.8 lateral) for cross-GPU determinism at 280K scale
-- **FP-02**: Emulated i64 in WGSL for fixed-point multiply/divide
-- **FP-03**: Golden test vectors for CPU-GPU parity verification
+- **INF-01**: Docker Compose deployment (7 services: sim, api, viz, redis, tiles, prometheus, grafana)
+- **INF-02**: Prometheus metric exposition with pre-built Grafana dashboards
+- **INF-03**: Automated health checks and crash recovery
 
-### Advanced GPU Dispatch
+### Scale & Distribution
 
-- **ADV-01**: Per-lane wave-front (Gauss-Seidel) dispatch for convergence at scale
-- **ADV-02**: Per-lane leader index computation with dual-leader tracking during lane-change transitions
-- **ADV-03**: PCG deterministic pseudo-random hash in WGSL
+- **SCL-01**: Multi-node distributed simulation for 2M+ agents
+- **SCL-02**: Horizontal WebSocket scaling beyond single Redis node
 
-### Advanced Routing & Prediction
+### Advanced Models
 
-- **ADV-04**: Custom CCH pathfinding with dynamic weight customization (~3ms update target)
-- **ADV-05**: Dynamic rerouting when travel times change significantly
-- **ADV-06**: In-process prediction ensemble (BPR + ETS + historical)
-
-### Meso-Micro Hybrid
-
-- **ADV-07**: Mesoscopic queue model for distant network areas
-- **ADV-08**: Graduated buffer zone (100m) transitions between meso and micro models
-
-### Additional Vehicle Types
-
-- **ADV-09**: Bicycle agents with sublane behavior (rightmost position, no filtering, v0=15km/h)
-- **ADV-10**: Pedestrian adaptive GPU workgroups based on density
-
-### API & External Access
-
-- **API-01**: gRPC server (tonic) exposes simulation control and data streaming endpoints
-- **API-02**: REST server (axum) provides HTTP endpoints for dashboard and external tool integration
-
-### Calibration & Validation
-
-- **CAL-01**: GEH statistic calculation compares simulated vs observed link volumes (target: GEH < 5 for 85%+ links)
-- **CAL-02**: Bayesian optimization (argmin) auto-tunes IDM/MOBIL parameters against field data
-
-### Data Export
-
-- **EXP-01**: FCD (Floating Car Data) export writes agent trajectories to Parquet/CSV
-- **EXP-02**: GeoJSON export of road network and agent positions for GIS tools
-- **EXP-03**: Link/intersection MOE statistics (travel time, delay, queue length, LOS)
-
-### Visualization
-
-- **VIZ-01**: deck.gl web dashboard for remote/multi-user visualization
-- **VIZ-02**: Checkpoint/restart saves simulation state to Parquet snapshots
-
-### Scaling
-
-- **SCALE-01**: Multi-GPU partitioning distributes agents across 2+ GPUs
-- **SCALE-02**: Full 5-district HCMC coverage (Districts 1, 3, 5, 10, Binh Thanh)
-- **SCALE-03**: Scale to 280K concurrent agents
+- **ADV-01**: Actuated signal control (demand-responsive)
+- **ADV-02**: Autonomous vehicle agent models
+- **ADV-03**: Full passenger flow model (multi-commodity OD, transfers, overcrowding)
 
 ## Out of Scope
 
+Explicitly excluded. Documented to prevent scope creep.
+
 | Feature | Reason |
 |---------|--------|
-| Wiedemann 99 car-following | 10 calibration params requiring PTV-calibrated datasets that don't exist for HCMC |
-| SUMO TraCI compatibility | Maintaining moving-target API compatibility is ongoing burden; conflicts with GPU-first design |
-| Activity-based demand (MATSim-style) | Requires hundreds of iterations to converge; conflicts with real-time interactive model |
-| 3D visualization (CesiumJS/Unreal) | Consumes GPU budget needed for simulation; no CityGML dataset for HCMC |
-| Connected/Autonomous Vehicle models | HCMC has negligible AV presence; diverts from motorbike differentiator |
-| Multi-node distributed simulation | 280K agents fit on single node with 2-4 GPUs; premature complexity |
-| Plugin/extension system | Creates backward compatibility obligations during active development |
-| Real-time sensor data ingestion | Requires streaming infrastructure orthogonal to core simulation |
-| OAuth/authentication | Single-user desktop app |
+| Wiedemann 99 car-following | Requires PTV-calibrated datasets unavailable for HCMC. Uncalibrated W99 worse than calibrated IDM. |
+| SUMO TraCI compatibility | Synchronous single-threaded protocol incompatible with GPU-parallel execution. ~200 command surface. |
+| Real-time sensor data fusion | Requires data partnerships, streaming pipeline (Kafka), massive scope for marginal POC value. |
+| ML/DL prediction (PyTorch/TF) | Python sidecar latency, ops complexity, no HCMC training data. In-process ensemble sufficient. |
+| CityGML 3D buildings | No CityGML dataset exists for HCMC. OSM building extrusions provide 80% visual impact. |
+| Plugin/extension system | Premature API stabilization prevents necessary architectural changes. Fork and modify instead. |
+| Multi-node distributed sim | 280K agents fit on single-node 2-4 GPUs. Multi-node adds latency, sync complexity. |
 
 ## Traceability
 
@@ -138,37 +114,13 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| GPU-01 | Phase 1 | Complete |
-| GPU-02 | Phase 1 | Complete |
-| GPU-03 | Phase 1 | Complete |
-| GPU-04 | Phase 1 | Complete |
-| REN-01 | Phase 1 | Complete |
-| REN-02 | Phase 1 | Complete |
-| REN-03 | Phase 1 | Complete |
-| REN-04 | Phase 1 | Complete |
-| PERF-01 | Phase 1 | Complete |
-| PERF-02 | Phase 1 | Complete |
-| VEH-01 | Phase 2 | Complete |
-| VEH-02 | Phase 2 + Phase 4 | Complete |
-| NET-01 | Phase 2 | Complete |
-| NET-02 | Phase 2 | Complete |
-| NET-03 | Phase 2 | Complete |
-| NET-04 | Phase 2 | Complete |
-| RTE-01 | Phase 2 | Complete |
-| DEM-01 | Phase 2 | Complete |
-| DEM-02 | Phase 2 | Complete |
-| DEM-03 | Phase 2 | Complete |
-| GRID-01 | Phase 2 | Complete |
-| APP-01 | Phase 2 | Complete |
-| APP-02 | Phase 2 | Complete |
-| VEH-03 | Phase 3 | Complete |
-| VEH-04 | Phase 3 | Complete |
+| (Updated by roadmapper) | | |
 
 **Coverage:**
-- v1 requirements: 25 total
-- Mapped to phases: 25
-- Unmapped: 0
+- v1.1 requirements: 40 total
+- Mapped to phases: 0
+- Unmapped: 40
 
 ---
-*Requirements defined: 2026-03-06*
-*Last updated: 2026-03-06 after project simplification (30 -> 25 requirements, 5 -> 3 phases)*
+*Requirements defined: 2026-03-07*
+*Last updated: 2026-03-07 after initial definition*
