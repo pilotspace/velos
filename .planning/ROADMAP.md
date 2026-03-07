@@ -35,7 +35,13 @@
   3. Loading the 5-district HCMC network produces a cleaned graph with ~25K edges, correct one-way streets, motorbike-only lanes, and no disconnected components
   4. Importing a SUMO .net.xml file produces the same road graph as OSM import for an equivalent area, and .rou.xml demand files spawn agents on correct routes
   5. Switching an agent between Krauss and IDM car-following at runtime produces visibly different driving behavior (Krauss dawdles, IDM maintains desired speed)
-**Plans**: TBD
+**Plans:** 5 plans
+Plans:
+- [ ] 05-01-PLAN.md -- Fixed-point types + Krauss car-following + CarFollowingModel ECS component
+- [ ] 05-02-PLAN.md -- 5-district HCMC network import + cleaning pipeline + ToD demand profiles
+- [ ] 05-03-PLAN.md -- SUMO .net.xml and .rou.xml file import compatibility
+- [ ] 05-04-PLAN.md -- GPU wave-front dispatch + physics cutover (IDM+Krauss shader)
+- [ ] 05-05-PLAN.md -- Multi-GPU partitioning + boundary protocol + 280K benchmark
 
 ### Phase 6: Agent Models & Signal Control
 **Goal**: Every vehicle and pedestrian type operates at GPU scale with realistic behavior, signals respond to traffic demand, and agents interact with V2I infrastructure
@@ -72,6 +78,6 @@ Phases 5 through 7 execute sequentially. Each phase depends on the prior phase.
 | 2. Road Network & Vehicle Models + egui | v1.0 | 4/4 | Complete | 2026-03-07 |
 | 3. Motorbike Sublane & Pedestrians | v1.0 | 2/2 | Complete | 2026-03-07 |
 | 4. MOBIL Wiring + Motorbike Jam Fix + Performance | v1.0 | 3/3 | Complete | 2026-03-07 |
-| 5. Foundation & GPU Engine | v1.1 | 0/0 | Not started | - |
+| 5. Foundation & GPU Engine | v1.1 | 0/5 | Planning complete | - |
 | 6. Agent Models & Signal Control | v1.1 | 0/0 | Not started | - |
 | 7. Intelligence, Routing & Prediction | v1.1 | 0/0 | Not started | - |
