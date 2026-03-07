@@ -4,6 +4,7 @@
 //! depends on. Agents need edges to drive on, spatial queries for neighbor
 //! detection, and routing for path assignment.
 
+pub mod cch;
 pub mod cleaning;
 pub mod error;
 pub mod graph;
