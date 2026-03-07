@@ -7,7 +7,8 @@ use petgraph::graph::{EdgeIndex, NodeIndex};
 use rand::Rng;
 
 use velos_core::components::{
-    Kinematics, LateralOffset, Position, RoadPosition, Route, VehicleType, WaitState,
+    CarFollowingModel, Kinematics, LateralOffset, Position, RoadPosition, Route, VehicleType,
+    WaitState,
 };
 use velos_demand::SpawnVehicleType;
 use velos_vehicle::gridlock::detect_cycles;
@@ -67,6 +68,23 @@ impl SimWorld {
             VehicleType::Pedestrian => velos_vehicle::types::VehicleType::Pedestrian,
         };
         let idm_params = default_idm_params(vehicle_type_for_params);
+
+        // Determine car-following model per agent.
+        // Motorbikes: always IDM (sublane model is IDM-based).
+        // Cars: ~30% Krauss, ~70% IDM (RNG-based; full demand-config-driven
+        // assignment will be wired when demand config is extended in Phase 6).
+        // Pedestrians: no CarFollowingModel component (skip car-following entirely).
+        let cf_model = match vtype {
+            VehicleType::Motorbike => Some(CarFollowingModel::Idm),
+            VehicleType::Car => {
+                if self.rng.gen_ratio(3, 10) {
+                    Some(CarFollowingModel::Krauss)
+                } else {
+                    Some(CarFollowingModel::Idm)
+                }
+            }
+            VehicleType::Pedestrian => None,
+        };
 
         let jitter_x = self.rng.gen_range(-5.0..5.0);
         let jitter_y = self.rng.gen_range(-5.0..5.0);
@@ -132,6 +150,7 @@ impl SimWorld {
                 base_components.4,
                 base_components.5,
                 base_components.6,
+                cf_model.unwrap(),
                 LateralOffset {
                     lateral_offset: initial_lateral,
                     desired_lateral: initial_lateral,
@@ -148,12 +167,14 @@ impl SimWorld {
                 base_components.4,
                 base_components.5,
                 base_components.6,
+                cf_model.unwrap(),
                 LateralOffset {
                     lateral_offset: initial_lateral,
                     desired_lateral: initial_lateral,
                 },
             ));
         } else {
+            // Pedestrians: no CarFollowingModel (they use social force, not car-following).
             self.world.spawn(base_components);
         }
     }

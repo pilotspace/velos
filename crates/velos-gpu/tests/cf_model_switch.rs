@@ -135,7 +135,7 @@ fn car_agents_krauss_ratio_approximately_30_percent() {
 
     // Accept 10-50% range (30% target, wide tolerance for small samples).
     assert!(
-        ratio >= 0.10 && ratio <= 0.50,
+        (0.10..=0.50).contains(&ratio),
         "Krauss ratio {ratio:.2} should be approximately 30% (tolerance: 10-50%)"
     );
 }
