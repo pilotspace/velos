@@ -3,7 +3,7 @@
 use petgraph::visit::EdgeRef;
 use petgraph::Direction;
 
-use velos_core::components::{Kinematics, Position, VehicleType, WaitState};
+use velos_core::components::{CarFollowingModel, Kinematics, Position, VehicleType, WaitState};
 use velos_signal::plan::PhaseState;
 
 use crate::renderer::AgentInstance;
@@ -18,27 +18,44 @@ impl SimWorld {
         let mut cars = Vec::new();
         let mut pedestrians = Vec::new();
 
-        for (pos, kin, vtype, ws) in self
+        for (pos, kin, vtype, ws, cf_model) in self
             .world
             .query::<(
                 &Position,
                 &Kinematics,
                 &VehicleType,
                 Option<&WaitState>,
+                Option<&CarFollowingModel>,
             )>()
             .iter()
         {
             // Position already includes lateral offset (applied in tick).
+            // Color-code by car-following model:
+            //   IDM: original colors (green/blue)
+            //   Krauss: orange/amber tones
+            let is_krauss = cf_model == Some(&CarFollowingModel::Krauss);
             let color = match *vtype {
                 VehicleType::Motorbike => {
                     let at_red = ws.map(|w| w.at_red_signal).unwrap_or(false);
-                    if at_red {
-                        [0.4, 1.0, 0.5, 1.0] // brighter green: swarming
+                    if is_krauss {
+                        if at_red {
+                            [1.0, 0.7, 0.2, 1.0] // bright orange: Krauss swarming
+                        } else {
+                            [0.9, 0.6, 0.1, 1.0] // orange: Krauss motorbike
+                        }
+                    } else if at_red {
+                        [0.4, 1.0, 0.5, 1.0] // brighter green: IDM swarming
                     } else {
-                        [0.2, 0.8, 0.4, 1.0] // normal green
+                        [0.2, 0.8, 0.4, 1.0] // normal green: IDM motorbike
                     }
                 }
-                VehicleType::Car => [0.2, 0.4, 0.9, 1.0],
+                VehicleType::Car => {
+                    if is_krauss {
+                        [0.9, 0.5, 0.1, 1.0] // orange: Krauss car
+                    } else {
+                        [0.2, 0.4, 0.9, 1.0] // blue: IDM car
+                    }
+                }
                 VehicleType::Pedestrian => [0.9, 0.9, 0.9, 1.0],
             };
 

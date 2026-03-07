@@ -16,6 +16,7 @@ use winit::{
 
 use crate::{
     camera::Camera2D,
+    compute::ComputeDispatcher,
     renderer::Renderer,
     sim::{SimState, SimWorld},
 };
@@ -31,6 +32,7 @@ struct GpuState {
     renderer: Renderer,
     camera: Camera2D,
     sim: SimWorld,
+    compute_dispatcher: ComputeDispatcher,
     // egui state
     egui_ctx: egui::Context,
     egui_state: egui_winit::State,
@@ -109,6 +111,7 @@ impl GpuState {
             velos_net::RoadGraph::new(petgraph::graph::DiGraph::new())
         };
 
+        let compute_dispatcher = ComputeDispatcher::new(&device);
         let sim = SimWorld::new(road_graph);
         let road_lines = sim.road_edge_lines();
         let (cx, cy) = sim.network_center();
@@ -143,6 +146,7 @@ impl GpuState {
             renderer,
             camera,
             sim,
+            compute_dispatcher,
             egui_ctx,
             egui_state,
             egui_renderer,
@@ -168,7 +172,12 @@ impl GpuState {
         self.sim.metrics.frame_time_ms = frame_dt * 1000.0;
 
         let base_dt = 0.016_f64; // ~60 FPS base timestep
-        let (motorbikes, cars, mut pedestrians) = self.sim.tick(base_dt);
+        let (motorbikes, cars, mut pedestrians) = self.sim.tick_gpu(
+            base_dt,
+            &self.device,
+            &self.queue,
+            &mut self.compute_dispatcher,
+        );
         // Append signal indicators as dot-shaped instances.
         pedestrians.extend(self.sim.build_signal_indicators());
         self.renderer

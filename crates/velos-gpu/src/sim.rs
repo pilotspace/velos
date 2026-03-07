@@ -3,6 +3,10 @@
 //! Extracted from app.rs to keep files under 700 lines.
 //! Owns the ECS world, road graph, spawner, signal controllers,
 //! gridlock detector, and all per-frame simulation stepping.
+//!
+//! Vehicle physics (car-following) runs on GPU via wave-front dispatch.
+//! Pedestrian physics (social force) runs on CPU.
+//! CPU car-following is kept in `cpu_reference` module for test validation only.
 
 use std::collections::HashMap;
 
@@ -14,16 +18,18 @@ use rand::rngs::StdRng;
 use rand::SeedableRng;
 
 use velos_core::components::{
-    Kinematics, LaneChangeState, LateralOffset, Position, RoadPosition, Route, VehicleType,
+    CarFollowingModel, GpuAgentState, Kinematics, LateralOffset, Position, RoadPosition, Route,
+    VehicleType,
 };
+use velos_core::fixed_point::{FixLat, FixPos, FixSpd};
 use velos_demand::{OdMatrix, Spawner, TodProfile, Zone};
 use velos_net::{RoadGraph, SpatialIndex};
 use velos_signal::controller::FixedTimeController;
 use velos_signal::plan::{SignalPhase, SignalPlan};
-use velos_vehicle::idm::{idm_acceleration, integrate_with_stopping_guard, IdmParams};
 use velos_vehicle::social_force::{self, PedestrianNeighbor, SocialForceParams};
-use velos_vehicle::sublane::{self, NeighborInfo, SublaneParams};
+use velos_vehicle::sublane::SublaneParams;
 
+use crate::compute::{sort_agents_by_lane, ComputeDispatcher};
 use crate::renderer::AgentInstance;
 use crate::sim_snapshot::AgentSnapshot;
 
@@ -183,7 +189,46 @@ impl SimWorld {
         }
     }
 
-    /// Run one simulation tick. Returns per-type instance arrays for rendering.
+    /// Run one simulation tick using GPU wave-front dispatch for vehicle physics.
+    /// Returns per-type instance arrays for rendering.
+    ///
+    /// Vehicle car-following (IDM + Krauss) runs on GPU.
+    /// Pedestrian social force runs on CPU.
+    pub fn tick_gpu(
+        &mut self,
+        base_dt: f64,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        dispatcher: &mut ComputeDispatcher,
+    ) -> (Vec<AgentInstance>, Vec<AgentInstance>, Vec<AgentInstance>) {
+        if !self.sim_state.is_running() {
+            return self.build_instances();
+        }
+
+        let dt = base_dt * self.speed_mult as f64;
+        self.sim_time += dt;
+
+        self.spawn_agents(dt);
+        self.step_signals(dt);
+
+        let snapshot = AgentSnapshot::collect(&self.world);
+        let spatial = SpatialIndex::from_positions(&snapshot.ids, &snapshot.positions);
+
+        // GPU wave-front dispatch for all vehicles (cars + motorbikes).
+        self.step_vehicles_gpu(dt as f32, device, queue, dispatcher);
+
+        // Pedestrians still on CPU (social force model).
+        self.step_pedestrians(dt, &spatial, &snapshot);
+
+        self.detect_gridlock();
+        self.remove_finished_agents();
+        self.update_metrics();
+
+        self.build_instances()
+    }
+
+    /// Run one simulation tick using CPU physics (fallback for tests without GPU).
+    /// Returns per-type instance arrays for rendering.
     pub fn tick(
         &mut self,
         base_dt: f64,
@@ -201,8 +246,8 @@ impl SimWorld {
         let snapshot = AgentSnapshot::collect(&self.world);
         let spatial = SpatialIndex::from_positions(&snapshot.ids, &snapshot.positions);
 
-        self.step_vehicles(dt, &spatial, &snapshot);
-        self.step_motorbikes_sublane(dt, &spatial, &snapshot);
+        cpu_reference::step_vehicles(self, dt, &spatial, &snapshot);
+        cpu_reference::step_motorbikes_sublane(self, dt, &spatial, &snapshot);
         self.step_pedestrians(dt, &spatial, &snapshot);
 
         self.detect_gridlock();
@@ -218,338 +263,112 @@ impl SimWorld {
         }
     }
 
-    /// Step car vehicles only. Motorbikes handled by step_motorbikes_sublane.
-    fn step_vehicles(&mut self, dt: f64, spatial: &SpatialIndex, snapshot: &AgentSnapshot) {
-        use crate::sim_mobil::CarMobilContext;
-
-        struct CarSnap {
-            entity: Entity,
-            rp: RoadPosition,
-            speed: f64,
-            heading: f64,
-            idm: IdmParams,
-            pos: [f64; 2],
-            has_lc: bool,
-        }
-
-        let agents: Vec<CarSnap> = self
-            .world
-            .query_mut::<(
-                Entity,
-                &RoadPosition,
-                &Kinematics,
-                &IdmParams,
-                &VehicleType,
-                &Position,
-                Option<&LaneChangeState>,
-            )>()
-            .into_iter()
-            .filter(|(_, _, _, _, vt, _, _)| **vt == VehicleType::Car)
-            .map(|(e, rp, kin, idm, _, pos, lcs)| CarSnap {
-                entity: e,
-                rp: *rp,
-                speed: kin.speed,
-                heading: kin.heading,
-                idm: *idm,
-                pos: [pos.x, pos.y],
-                has_lc: lcs.is_some(),
-            })
-            .collect();
-
-        // Build per-edge and per-(edge, lane) agent maps.
-        let mut edge_agents: HashMap<u32, Vec<(Entity, f64)>> = HashMap::new();
-        let mut edge_lane_agents: HashMap<(u32, u8), Vec<(Entity, f64)>> = HashMap::new();
-        for car in &agents {
-            edge_agents
-                .entry(car.rp.edge_index)
-                .or_default()
-                .push((car.entity, car.rp.offset_m));
-            edge_lane_agents
-                .entry((car.rp.edge_index, car.rp.lane))
-                .or_default()
-                .push((car.entity, car.rp.offset_m));
-        }
-        for v in edge_agents.values_mut() {
-            v.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-        }
-        for v in edge_lane_agents.values_mut() {
-            v.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-        }
-
-        let speed_map: HashMap<Entity, f64> =
-            agents.iter().map(|c| (c.entity, c.speed)).collect();
-
-        struct CarUpdate {
-            entity: Entity,
-            v_new: f64,
-            new_offset: f64,
-            at_red: bool,
-            start_lane_change: Option<(u8, f64)>,
-        }
-
-        let mut updates: Vec<CarUpdate> = Vec::with_capacity(agents.len());
-
-        for car in &agents {
-            let at_red = self.check_signal_red(&car.rp);
-
-            let (mut gap, mut delta_v) = if at_red {
-                (2.0, car.speed)
-            } else {
-                Self::find_leader_static(
-                    car.entity, &car.rp, &edge_agents, &speed_map, car.speed,
-                )
-            };
-
-            // Cross-type avoidance: slow down for pedestrians crossing ahead.
-            let nearby = spatial.nearest_within_radius(car.pos, 8.0);
-            for neighbor in &nearby {
-                let dx = neighbor.pos[0] - car.pos[0];
-                let dy = neighbor.pos[1] - car.pos[1];
-                let longitudinal = dx * car.heading.cos() + dy * car.heading.sin();
-                let lateral = (-dx * car.heading.sin() + dy * car.heading.cos()).abs();
-                if longitudinal < 2.0 || lateral > 2.0 {
-                    continue;
-                }
-                if let Some(vt) = snapshot.vehicle_type(neighbor.id)
-                    && vt == VehicleType::Pedestrian
-                    && longitudinal < gap
-                {
-                    let ped_speed = snapshot.speed(neighbor.id).unwrap_or(0.0);
-                    gap = longitudinal;
-                    delta_v = (car.speed - ped_speed).max(0.0);
-                }
-            }
-
-            let accel_current = idm_acceleration(&car.idm, car.speed, gap, delta_v);
-            let (v_new, dx) = integrate_with_stopping_guard(car.speed, accel_current, dt);
-
-            // MOBIL lane-change evaluation.
-            let start_lc = if !at_red {
-                let ctx = CarMobilContext {
-                    entity: car.entity,
-                    rp: car.rp,
-                    speed: car.speed,
-                    idm_params: car.idm,
-                    has_lane_change: car.has_lc,
-                };
-                self.evaluate_mobil(&ctx, accel_current, &edge_lane_agents, &speed_map)
-            } else {
-                None
-            };
-
-            updates.push(CarUpdate {
-                entity: car.entity,
-                v_new,
-                new_offset: car.rp.offset_m + dx,
-                at_red,
-                start_lane_change: start_lc,
-            });
-        }
-
-        // Apply updates.
-        for upd in updates {
-            if let Some((target_lane, started_at)) = upd.start_lane_change {
-                self.start_lane_change(upd.entity, target_lane, started_at);
-            }
-            self.apply_vehicle_update(upd.entity, upd.v_new, upd.new_offset, upd.at_red);
-        }
-
-        // Process active lane changes: gradual drift + completion.
-        self.process_car_lane_changes(dt);
-
-        // Apply lateral offset for all cars with LateralOffset (including those
-        // that completed a lane change in a previous tick). apply_vehicle_update
-        // positions cars at road centerline, so we must re-apply the offset.
-        let car_offsets: Vec<(Entity, f64, bool)> = self
-            .world
-            .query_mut::<(Entity, &LateralOffset, &VehicleType, Option<&LaneChangeState>)>()
-            .into_iter()
-            .filter(|(_, _, vt, _)| **vt == VehicleType::Car)
-            .map(|(e, lat, _, lcs)| (e, lat.lateral_offset, lcs.is_some()))
-            .collect();
-        for (entity, lateral, has_lc) in car_offsets {
-            // Skip cars with active lane change — process_car_lane_changes handles those.
-            if !has_lc {
-                self.apply_lateral_world_offset(entity, lateral);
-            }
-        }
-    }
-
-    /// Step motorbike agents with sublane lateral positioning.
-    fn step_motorbikes_sublane(
+    /// GPU wave-front dispatch for vehicle physics (cars + motorbikes).
+    ///
+    /// 1. Collect ECS agent state -> GpuAgentState
+    /// 2. Sort by lane (CPU)
+    /// 3. Upload + dispatch (GPU)
+    /// 4. Readback + write back to ECS
+    fn step_vehicles_gpu(
         &mut self,
-        dt: f64,
-        spatial: &SpatialIndex,
-        snapshot: &AgentSnapshot,
+        dt: f32,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        dispatcher: &mut ComputeDispatcher,
     ) {
-        struct BikeState {
-            entity: Entity,
-            rp: RoadPosition,
-            speed: f64,
-            idm_params: IdmParams,
-            lateral: f64,
-            heading: f64,
-            pos: [f64; 2],
-        }
+        // Collect vehicle agent states from ECS.
+        let mut gpu_agents: Vec<GpuAgentState> = Vec::new();
+        let mut entity_map: Vec<Entity> = Vec::new();
 
-        let bikes: Vec<BikeState> = self
+        for (entity, rp, kin, vtype, lat, cf_model) in self
             .world
             .query_mut::<(
                 Entity,
                 &RoadPosition,
                 &Kinematics,
-                &IdmParams,
-                &LateralOffset,
                 &VehicleType,
-                &Position,
+                Option<&LateralOffset>,
+                Option<&CarFollowingModel>,
             )>()
             .into_iter()
-            .filter(|(_, _, _, _, _, vt, _)| **vt == VehicleType::Motorbike)
-            .map(|(e, rp, kin, idm, lat, _, pos)| BikeState {
-                entity: e,
-                rp: *rp,
-                speed: kin.speed,
-                idm_params: *idm,
-                lateral: lat.lateral_offset,
-                heading: kin.heading,
-                pos: [pos.x, pos.y],
-            })
-            .collect();
+        {
+            // Only vehicles (cars + motorbikes), not pedestrians.
+            if *vtype == VehicleType::Pedestrian {
+                continue;
+            }
 
-        struct BikeUpdate {
-            entity: Entity,
-            v_new: f64,
-            new_offset: f64,
-            new_lateral: f64,
-            at_red: bool,
+            let cf = cf_model.copied().unwrap_or(CarFollowingModel::Idm);
+            let rng_seed = entity.id();
+
+            gpu_agents.push(GpuAgentState {
+                edge_id: rp.edge_index,
+                lane_idx: rp.lane as u32,
+                position: FixPos::from_f64(rp.offset_m).raw(),
+                lateral: FixLat::from_f64(lat.map_or(0.0, |l| l.lateral_offset)).raw(),
+                speed: FixSpd::from_f64(kin.speed).raw(),
+                acceleration: 0,
+                cf_model: cf as u32,
+                rng_state: rng_seed,
+            });
+            entity_map.push(entity);
         }
 
-        let mut updates: Vec<BikeUpdate> = Vec::with_capacity(bikes.len());
+        if gpu_agents.is_empty() {
+            return;
+        }
 
-        for bike in &bikes {
-            let (entity, rp, speed, idm_params, lateral, heading, agent_pos) = (
-                &bike.entity,
-                &bike.rp,
-                &bike.speed,
-                &bike.idm_params,
-                &bike.lateral,
-                &bike.heading,
-                &bike.pos,
-            );
-            let at_red = self.check_signal_red(rp);
+        // Sort by lane for wave-front dispatch.
+        let (lane_offsets, lane_counts, lane_agent_indices) = sort_agents_by_lane(&gpu_agents);
 
-            // Road width from edge lane_count.
-            let edge = EdgeIndex::new(rp.edge_index as usize);
-            let lane_count = self
-                .road_graph
-                .inner()
-                .edge_weight(edge)
-                .map(|e| e.lane_count as f64)
-                .unwrap_or(2.0);
-            let road_width = lane_count * 3.5;
+        // Upload to GPU.
+        dispatcher.upload_wave_front_data(
+            device,
+            queue,
+            &gpu_agents,
+            &lane_offsets,
+            &lane_counts,
+            &lane_agent_indices,
+        );
 
-            let nearby = spatial.nearest_within_radius_capped(*agent_pos, 6.0, 20);
+        // Dispatch wave-front shader.
+        let mut encoder = device.create_command_encoder(&Default::default());
+        dispatcher.dispatch_wave_front(&mut encoder, device, queue, dt);
+        queue.submit(std::iter::once(encoder.finish()));
 
-            let mut neighbor_infos = Vec::new();
-            let mut idm_gap = 1000.0_f64;
-            let mut idm_delta_v = 0.0_f64;
+        // Readback updated agent states.
+        let updated = dispatcher.readback_wave_front_agents(device, queue);
 
-            for n in &nearby {
-                // Skip self by position proximity.
-                let dx = n.pos[0] - agent_pos[0];
-                let dy = n.pos[1] - agent_pos[1];
-                let dist_sq = dx * dx + dy * dy;
-                if dist_sq < 0.0001 {
-                    continue; // self or overlapping
-                }
-                let Some(n_vtype) = snapshot.vehicle_type(n.id) else {
+        // Write back to ECS.
+        for (i, gpu_state) in updated.iter().enumerate() {
+            if i >= entity_map.len() {
+                break;
+            }
+            let entity = entity_map[i];
+
+            let new_offset = FixPos::from_raw(gpu_state.position).to_f64();
+            let new_speed = FixSpd::from_raw(gpu_state.speed).to_f64();
+
+            // Apply via the standard vehicle update path (handles edge transitions).
+            let at_red = {
+                let Ok(rp) = self.world.query_one_mut::<&RoadPosition>(entity) else {
                     continue;
                 };
-
-                // Skip agents heading in the opposite direction (head-on traffic).
-                // cos(angle_diff) < 0 means >90° apart → opposing traffic.
-                let n_heading = snapshot.heading(n.id).unwrap_or(0.0);
-                let angle_diff = n_heading - heading;
-                if angle_diff.cos() < 0.0 {
-                    continue;
-                }
-
-                let n_speed = snapshot.speed(n.id).unwrap_or(0.0);
-                let n_half_width = AgentSnapshot::half_width_for_type(n_vtype);
-                let n_lateral = snapshot.lateral_offset(n.id).unwrap_or(road_width / 2.0);
-
-                // Longitudinal gap: project displacement along heading direction.
-                let longitudinal = dx * heading.cos() + dy * heading.sin();
-
-                // Only add vehicles (cars/motorbikes) to sublane neighbor list.
-                // Pedestrians are off-road and shouldn't affect lateral gap computation.
-                if n_vtype != VehicleType::Pedestrian {
-                    neighbor_infos.push(NeighborInfo {
-                        lateral_offset: n_lateral,
-                        longitudinal_gap: longitudinal,
-                        half_width: n_half_width,
-                        speed: n_speed,
-                    });
-
-                    // Longitudinal IDM leader: nearest vehicle ahead on similar lateral band.
-                    let lateral_dist = (-dx * heading.sin() + dy * heading.cos()).abs();
-                    if longitudinal > 0.0 && lateral_dist < 0.8 && longitudinal < idm_gap {
-                        idm_gap = longitudinal;
-                        idm_delta_v = *speed - n_speed;
-                    }
-                }
-            }
-
-            if at_red && *speed < 0.5 && idm_gap > 2.0 {
-                idm_gap = 2.0;
-                idm_delta_v = *speed;
-            }
-
-            // Sublane: compute desired lateral and drift.
-            let desired = sublane::compute_desired_lateral(
-                *lateral,
-                *speed,
-                road_width,
-                &neighbor_infos,
-                at_red,
-                &self.sublane_params,
-            );
-            let max_lat_speed = if at_red {
-                self.sublane_params.swarm_lateral_speed
-            } else {
-                self.sublane_params.max_lateral_speed
+                let rp_copy = *rp;
+                self.check_signal_red(&rp_copy)
             };
-            let new_lateral = sublane::apply_lateral_drift(*lateral, desired, max_lat_speed, dt);
+            self.apply_vehicle_update(entity, new_speed, new_offset, at_red);
 
-            // IDM longitudinal.
-            let accel = idm_acceleration(idm_params, *speed, idm_gap, idm_delta_v);
-            let (v_new, ddx) = integrate_with_stopping_guard(*speed, accel, dt);
-
-            updates.push(BikeUpdate {
-                entity: *entity,
-                v_new,
-                new_offset: rp.offset_m + ddx,
-                new_lateral,
-                at_red,
-            });
-        }
-
-        // Apply updates.
-        for upd in updates {
-            // Update LateralOffset first.
-            if let Ok(lat) = self.world.query_one_mut::<&mut LateralOffset>(upd.entity) {
-                lat.lateral_offset = upd.new_lateral;
-                lat.desired_lateral = upd.new_lateral;
+            // For motorbikes, update lateral offset.
+            if let Ok(lat) = self.world.query_one_mut::<&mut LateralOffset>(entity) {
+                let new_lateral = FixLat::from_raw(gpu_state.lateral).to_f64();
+                lat.lateral_offset = new_lateral;
+                lat.desired_lateral = new_lateral;
+                self.apply_lateral_world_offset(entity, new_lateral);
             }
-
-            self.apply_vehicle_update(upd.entity, upd.v_new, upd.new_offset, upd.at_red);
-
-            // Apply lateral offset to world position.
-            self.apply_lateral_world_offset(upd.entity, upd.new_lateral);
         }
     }
 
-    /// Step pedestrians using social force model.
+    /// Step pedestrians using social force model (CPU).
     fn step_pedestrians(&mut self, dt: f64, spatial: &SpatialIndex, snapshot: &AgentSnapshot) {
         struct PedState {
             entity: Entity,
@@ -598,8 +417,6 @@ impl SimWorld {
             let target_node = NodeIndex::new(path[*current_step] as usize);
             let raw_target = self.road_graph.inner()[target_node].pos;
 
-            // Offset pedestrian target to road edge (sidewalk) so they don't walk
-            // along the road centerline. Compute perpendicular from previous node.
             let target_pos = if *current_step > 0 {
                 let prev_node = NodeIndex::new(path[*current_step - 1] as usize);
                 let prev_pos = self.road_graph.inner()[prev_node].pos;
@@ -607,7 +424,6 @@ impl SimWorld {
                 let seg_dy = raw_target[1] - prev_pos[1];
                 let seg_len = (seg_dx * seg_dx + seg_dy * seg_dy).sqrt();
                 if seg_len > 0.1 {
-                    // Offset 5m to the right of the road direction (sidewalk).
                     let perp_x = -seg_dy / seg_len;
                     let perp_y = seg_dx / seg_len;
                     [raw_target[0] + perp_x * 5.0, raw_target[1] + perp_y * 5.0]
@@ -618,12 +434,10 @@ impl SimWorld {
                 raw_target
             };
 
-            // Build neighbor list from spatial index (all agent types).
             let nearby = spatial.nearest_within_radius(*pos, 3.0);
             let neighbors: Vec<PedestrianNeighbor> = nearby
                 .iter()
                 .filter(|n| {
-                    // Skip self by position proximity.
                     let ddx = n.pos[0] - pos[0];
                     let ddy = n.pos[1] - pos[1];
                     ddx * ddx + ddy * ddy > 0.0001
@@ -635,7 +449,7 @@ impl SimWorld {
                     let radius = AgentSnapshot::half_width_for_type(n_vtype);
                     Some(PedestrianNeighbor {
                         pos: n.pos,
-                        vel: [0.0, 0.0], // approx: driving force dominates
+                        vel: [0.0, 0.0],
                         radius,
                     })
                 })
@@ -657,11 +471,10 @@ impl SimWorld {
 
             let new_pos = [pos[0] + new_vel[0] * dt, pos[1] + new_vel[1] * dt];
 
-            // Check if reached waypoint.
             let dx = target_pos[0] - new_pos[0];
             let dy = target_pos[1] - new_pos[1];
             let dist = (dx * dx + dy * dy).sqrt();
-            let advance = dist < 2.0; // within 2m of waypoint
+            let advance = dist < 2.0;
 
             updates.push(PedUpdate {
                 entity: *entity,
@@ -690,5 +503,340 @@ impl SimWorld {
             }
         }
     }
+}
 
+/// CPU reference implementations of vehicle physics.
+///
+/// Kept for GPU validation testing. NOT used in the production sim loop.
+/// Production uses `SimWorld::step_vehicles_gpu()` via wave-front dispatch.
+pub(crate) mod cpu_reference {
+    use std::collections::HashMap;
+
+    use hecs::Entity;
+
+    use velos_core::components::{
+        Kinematics, LaneChangeState, LateralOffset, Position, RoadPosition, VehicleType,
+    };
+    use velos_net::SpatialIndex;
+    use velos_vehicle::idm::{idm_acceleration, integrate_with_stopping_guard, IdmParams};
+    use velos_vehicle::sublane::{self, NeighborInfo};
+
+    use crate::sim::SimWorld;
+    use crate::sim_snapshot::AgentSnapshot;
+
+    /// CPU step for car vehicles (IDM + MOBIL). Test/validation reference only.
+    pub fn step_vehicles(
+        sim: &mut SimWorld,
+        dt: f64,
+        spatial: &SpatialIndex,
+        snapshot: &AgentSnapshot,
+    ) {
+        use crate::sim_mobil::CarMobilContext;
+
+        struct CarSnap {
+            entity: Entity,
+            rp: RoadPosition,
+            speed: f64,
+            heading: f64,
+            idm: IdmParams,
+            pos: [f64; 2],
+            has_lc: bool,
+        }
+
+        let agents: Vec<CarSnap> = sim
+            .world
+            .query_mut::<(
+                Entity,
+                &RoadPosition,
+                &Kinematics,
+                &IdmParams,
+                &VehicleType,
+                &Position,
+                Option<&LaneChangeState>,
+            )>()
+            .into_iter()
+            .filter(|(_, _, _, _, vt, _, _)| **vt == VehicleType::Car)
+            .map(|(e, rp, kin, idm, _, pos, lcs)| CarSnap {
+                entity: e,
+                rp: *rp,
+                speed: kin.speed,
+                heading: kin.heading,
+                idm: *idm,
+                pos: [pos.x, pos.y],
+                has_lc: lcs.is_some(),
+            })
+            .collect();
+
+        let mut edge_agents: HashMap<u32, Vec<(Entity, f64)>> = HashMap::new();
+        let mut edge_lane_agents: HashMap<(u32, u8), Vec<(Entity, f64)>> = HashMap::new();
+        for car in &agents {
+            edge_agents
+                .entry(car.rp.edge_index)
+                .or_default()
+                .push((car.entity, car.rp.offset_m));
+            edge_lane_agents
+                .entry((car.rp.edge_index, car.rp.lane))
+                .or_default()
+                .push((car.entity, car.rp.offset_m));
+        }
+        for v in edge_agents.values_mut() {
+            v.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        }
+        for v in edge_lane_agents.values_mut() {
+            v.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        }
+
+        let speed_map: HashMap<Entity, f64> =
+            agents.iter().map(|c| (c.entity, c.speed)).collect();
+
+        struct CarUpdate {
+            entity: Entity,
+            v_new: f64,
+            new_offset: f64,
+            at_red: bool,
+            start_lane_change: Option<(u8, f64)>,
+        }
+
+        let mut updates: Vec<CarUpdate> = Vec::with_capacity(agents.len());
+
+        for car in &agents {
+            let at_red = sim.check_signal_red(&car.rp);
+
+            let (mut gap, mut delta_v) = if at_red {
+                (2.0, car.speed)
+            } else {
+                SimWorld::find_leader_static(
+                    car.entity, &car.rp, &edge_agents, &speed_map, car.speed,
+                )
+            };
+
+            let nearby = spatial.nearest_within_radius(car.pos, 8.0);
+            for neighbor in &nearby {
+                let dx = neighbor.pos[0] - car.pos[0];
+                let dy = neighbor.pos[1] - car.pos[1];
+                let longitudinal = dx * car.heading.cos() + dy * car.heading.sin();
+                let lateral = (-dx * car.heading.sin() + dy * car.heading.cos()).abs();
+                if longitudinal < 2.0 || lateral > 2.0 {
+                    continue;
+                }
+                if let Some(vt) = snapshot.vehicle_type(neighbor.id)
+                    && vt == VehicleType::Pedestrian
+                    && longitudinal < gap
+                {
+                    let ped_speed = snapshot.speed(neighbor.id).unwrap_or(0.0);
+                    gap = longitudinal;
+                    delta_v = (car.speed - ped_speed).max(0.0);
+                }
+            }
+
+            let accel_current = idm_acceleration(&car.idm, car.speed, gap, delta_v);
+            let (v_new, dx) = integrate_with_stopping_guard(car.speed, accel_current, dt);
+
+            let start_lc = if !at_red {
+                let ctx = CarMobilContext {
+                    entity: car.entity,
+                    rp: car.rp,
+                    speed: car.speed,
+                    idm_params: car.idm,
+                    has_lane_change: car.has_lc,
+                };
+                sim.evaluate_mobil(&ctx, accel_current, &edge_lane_agents, &speed_map)
+            } else {
+                None
+            };
+
+            updates.push(CarUpdate {
+                entity: car.entity,
+                v_new,
+                new_offset: car.rp.offset_m + dx,
+                at_red,
+                start_lane_change: start_lc,
+            });
+        }
+
+        for upd in updates {
+            if let Some((target_lane, started_at)) = upd.start_lane_change {
+                sim.start_lane_change(upd.entity, target_lane, started_at);
+            }
+            sim.apply_vehicle_update(upd.entity, upd.v_new, upd.new_offset, upd.at_red);
+        }
+
+        sim.process_car_lane_changes(dt);
+
+        let car_offsets: Vec<(Entity, f64, bool)> = sim
+            .world
+            .query_mut::<(Entity, &LateralOffset, &VehicleType, Option<&LaneChangeState>)>()
+            .into_iter()
+            .filter(|(_, _, vt, _)| **vt == VehicleType::Car)
+            .map(|(e, lat, _, lcs)| (e, lat.lateral_offset, lcs.is_some()))
+            .collect();
+        for (entity, lateral, has_lc) in car_offsets {
+            if !has_lc {
+                sim.apply_lateral_world_offset(entity, lateral);
+            }
+        }
+    }
+
+    /// CPU step for motorbike agents with sublane lateral positioning.
+    /// Test/validation reference only.
+    pub fn step_motorbikes_sublane(
+        sim: &mut SimWorld,
+        dt: f64,
+        spatial: &SpatialIndex,
+        snapshot: &AgentSnapshot,
+    ) {
+        use petgraph::graph::EdgeIndex;
+
+        struct BikeState {
+            entity: Entity,
+            rp: RoadPosition,
+            speed: f64,
+            idm_params: IdmParams,
+            lateral: f64,
+            heading: f64,
+            pos: [f64; 2],
+        }
+
+        let bikes: Vec<BikeState> = sim
+            .world
+            .query_mut::<(
+                Entity,
+                &RoadPosition,
+                &Kinematics,
+                &IdmParams,
+                &LateralOffset,
+                &VehicleType,
+                &Position,
+            )>()
+            .into_iter()
+            .filter(|(_, _, _, _, _, vt, _)| **vt == VehicleType::Motorbike)
+            .map(|(e, rp, kin, idm, lat, _, pos)| BikeState {
+                entity: e,
+                rp: *rp,
+                speed: kin.speed,
+                idm_params: *idm,
+                lateral: lat.lateral_offset,
+                heading: kin.heading,
+                pos: [pos.x, pos.y],
+            })
+            .collect();
+
+        struct BikeUpdate {
+            entity: Entity,
+            v_new: f64,
+            new_offset: f64,
+            new_lateral: f64,
+            at_red: bool,
+        }
+
+        let mut updates: Vec<BikeUpdate> = Vec::with_capacity(bikes.len());
+
+        for bike in &bikes {
+            let (entity, rp, speed, idm_params, lateral, heading, agent_pos) = (
+                &bike.entity,
+                &bike.rp,
+                &bike.speed,
+                &bike.idm_params,
+                &bike.lateral,
+                &bike.heading,
+                &bike.pos,
+            );
+            let at_red = sim.check_signal_red(rp);
+
+            let edge = EdgeIndex::new(rp.edge_index as usize);
+            let lane_count = sim
+                .road_graph
+                .inner()
+                .edge_weight(edge)
+                .map(|e| e.lane_count as f64)
+                .unwrap_or(2.0);
+            let road_width = lane_count * 3.5;
+
+            let nearby = spatial.nearest_within_radius_capped(*agent_pos, 6.0, 20);
+
+            let mut neighbor_infos = Vec::new();
+            let mut idm_gap = 1000.0_f64;
+            let mut idm_delta_v = 0.0_f64;
+
+            for n in &nearby {
+                let dx = n.pos[0] - agent_pos[0];
+                let dy = n.pos[1] - agent_pos[1];
+                let dist_sq = dx * dx + dy * dy;
+                if dist_sq < 0.0001 {
+                    continue;
+                }
+                let Some(n_vtype) = snapshot.vehicle_type(n.id) else {
+                    continue;
+                };
+
+                let n_heading = snapshot.heading(n.id).unwrap_or(0.0);
+                let angle_diff = n_heading - heading;
+                if angle_diff.cos() < 0.0 {
+                    continue;
+                }
+
+                let n_speed = snapshot.speed(n.id).unwrap_or(0.0);
+                let n_half_width = AgentSnapshot::half_width_for_type(n_vtype);
+                let n_lateral = snapshot.lateral_offset(n.id).unwrap_or(road_width / 2.0);
+
+                let longitudinal = dx * heading.cos() + dy * heading.sin();
+
+                if n_vtype != VehicleType::Pedestrian {
+                    neighbor_infos.push(NeighborInfo {
+                        lateral_offset: n_lateral,
+                        longitudinal_gap: longitudinal,
+                        half_width: n_half_width,
+                        speed: n_speed,
+                    });
+
+                    let lateral_dist = (-dx * heading.sin() + dy * heading.cos()).abs();
+                    if longitudinal > 0.0 && lateral_dist < 0.8 && longitudinal < idm_gap {
+                        idm_gap = longitudinal;
+                        idm_delta_v = *speed - n_speed;
+                    }
+                }
+            }
+
+            if at_red && *speed < 0.5 && idm_gap > 2.0 {
+                idm_gap = 2.0;
+                idm_delta_v = *speed;
+            }
+
+            let desired = sublane::compute_desired_lateral(
+                *lateral,
+                *speed,
+                road_width,
+                &neighbor_infos,
+                at_red,
+                &sim.sublane_params,
+            );
+            let max_lat_speed = if at_red {
+                sim.sublane_params.swarm_lateral_speed
+            } else {
+                sim.sublane_params.max_lateral_speed
+            };
+            let new_lateral = sublane::apply_lateral_drift(*lateral, desired, max_lat_speed, dt);
+
+            let accel = idm_acceleration(idm_params, *speed, idm_gap, idm_delta_v);
+            let (v_new, ddx) = integrate_with_stopping_guard(*speed, accel, dt);
+
+            updates.push(BikeUpdate {
+                entity: *entity,
+                v_new,
+                new_offset: rp.offset_m + ddx,
+                new_lateral,
+                at_red,
+            });
+        }
+
+        for upd in updates {
+            if let Ok(lat) = sim.world.query_one_mut::<&mut LateralOffset>(upd.entity) {
+                lat.lateral_offset = upd.new_lateral;
+                lat.desired_lateral = upd.new_lateral;
+            }
+
+            sim.apply_vehicle_update(upd.entity, upd.v_new, upd.new_offset, upd.at_red);
+            sim.apply_lateral_world_offset(upd.entity, upd.new_lateral);
+        }
+    }
 }
