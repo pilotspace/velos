@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: SUMO Replacement Engine
 status: executing
-stopped_at: Completed 05-02-PLAN.md
-last_updated: "2026-03-07T12:26:42Z"
-last_activity: 2026-03-07 -- Completed Plan 05-02 (5-district network cleaning + demand profiles)
+stopped_at: Completed 05-04-PLAN.md
+last_updated: "2026-03-07T12:43:01Z"
+last_activity: 2026-03-07 -- Completed Plan 05-04 (GPU wave-front dispatch + physics cutover)
 progress:
   total_phases: 3
   completed_phases: 0
   total_plans: 5
-  completed_plans: 3
-  percent: 15
+  completed_plans: 4
+  percent: 20
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-03-07)
 ## Current Position
 
 Phase: 5 of 7 (Foundation & GPU Engine)
-Plan: 03 complete, ready for 04
+Plan: 04 complete, ready for 05
 Status: Executing
-Last activity: 2026-03-07 -- Completed Plan 05-02 (5-district network cleaning + demand profiles)
+Last activity: 2026-03-07 -- Completed Plan 05-04 (GPU wave-front dispatch + physics cutover)
 
-Progress: [#---------] 10%
+Progress: [##--------] 20%
 
 ## Accumulated Context
 
@@ -52,6 +52,9 @@ Recent decisions affecting current work:
 - [05-02]: postcard for binary graph serialization (compact, serde-native)
 - [05-02]: Service roads heuristically tagged motorbike-only (HCMC alleys)
 - [05-02]: Base OD matrix ~140K/hr scales to ~280K via ToD peak factor ~2.0x
+- [05-04]: f32 intermediates for GPU physics, fixed-point only for position/speed storage
+- [05-04]: tick_gpu() as production method, tick() as CPU fallback for tests
+- [05-04]: CPU reference functions kept in cpu_reference module for ongoing GPU validation
 
 ### Pending Todos
 
@@ -59,7 +62,7 @@ None.
 
 ### Blockers/Concerns
 
-- GPU compute is proven but not wired into v1.0 sim loop -- Phase 5 must kill CPU path immediately
+- GPU compute now wired into sim loop via tick_gpu() -- CPU path replaced (Plan 05-04)
 - wgpu multi-adapter for compute is untested -- Spike S2 needed before multi-GPU implementation
 - No Rust CCH crate exists -- Phase 7 requires custom implementation (2-3 weeks estimated)
 - Fixed-point penalty may be 40-80% -- @invariant fallback available if performance unacceptable
@@ -67,6 +70,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-07T12:26:42Z
-Stopped at: Completed 05-02-PLAN.md
-Resume file: .planning/phases/05-foundation-gpu-engine/05-02-SUMMARY.md
+Last session: 2026-03-07T12:43:01Z
+Stopped at: Completed 05-04-PLAN.md
+Resume file: .planning/phases/05-foundation-gpu-engine/05-04-SUMMARY.md

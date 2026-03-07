@@ -10,9 +10,9 @@ Prove VELOS can replace SUMO: reimplement all core SUMO features, add agent inte
 
 ### GPU Engine & Scale
 
-- [ ] **GPU-01**: Simulation physics runs on GPU compute pipeline (not CPU) as the primary execution path
+- [x] **GPU-01**: Simulation physics runs on GPU compute pipeline (not CPU) as the primary execution path
 - [ ] **GPU-02**: GPU spatial partitioning via METIS k-way graph partitioning across multiple adapters
-- [ ] **GPU-03**: Per-lane wave-front (Gauss-Seidel) dispatch replaces simple parallel dispatch
+- [x] **GPU-03**: Per-lane wave-front (Gauss-Seidel) dispatch replaces simple parallel dispatch
 - [x] **GPU-04**: Fixed-point arithmetic (Q16.16 position, Q12.20 speed, Q8.8 lateral) for cross-GPU determinism
 - [ ] **GPU-05**: Boundary agent protocol (outbox/inbox staging buffers) for multi-GPU agent transfers
 - [ ] **GPU-06**: System sustains 280K agents at 10 steps/sec real-time on 2-4 GPUs
@@ -124,9 +124,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| GPU-01 | Phase 5 | Pending |
+| GPU-01 | Phase 5 | Complete |
 | GPU-02 | Phase 5 | Pending |
-| GPU-03 | Phase 5 | Pending |
+| GPU-03 | Phase 5 | Complete |
 | GPU-04 | Phase 5 | Complete (05-01) |
 | GPU-05 | Phase 5 | Pending |
 | GPU-06 | Phase 5 | Pending |
