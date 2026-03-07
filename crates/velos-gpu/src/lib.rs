@@ -7,6 +7,8 @@ pub mod camera;
 pub mod compute;
 pub mod device;
 pub mod error;
+pub mod multi_gpu;
+pub mod partition;
 pub mod renderer;
 pub mod sim;
 mod sim_helpers;

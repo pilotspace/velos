@@ -242,10 +242,34 @@ fn multi_gpu_scheduler_step_with_2_partitions() {
     // Run a step (CPU-only protocol, no GPU dispatch).
     scheduler.step_cpu();
 
-    // Agent count should be preserved (no agents lost in transfer).
-    let total_after = scheduler.agent_count();
+    // Agent count should be preserved: agents in partitions + agents in-transit (inbox).
+    // Agents on boundary edges are outboxed this step and routed to inboxes.
+    // They will be spawned at the start of the next step.
+    let agents_in_partitions: usize = scheduler
+        .partitions()
+        .iter()
+        .map(|p| p.agent_states.len())
+        .sum();
+    let agents_in_transit: usize = scheduler
+        .partitions()
+        .iter()
+        .map(|p| p.inbox.len())
+        .sum();
+    let total_after = agents_in_partitions + agents_in_transit;
     assert_eq!(
         total_after, total_before,
-        "agents lost during multi-GPU step"
+        "agents lost during multi-GPU step (in_partitions={agents_in_partitions}, in_transit={agents_in_transit})"
+    );
+
+    // Run a second step to verify inbox agents get spawned.
+    scheduler.step_cpu();
+    let total_after_step2: usize = scheduler
+        .partitions()
+        .iter()
+        .map(|p| p.agent_states.len() + p.inbox.len())
+        .sum();
+    assert_eq!(
+        total_after_step2, total_before,
+        "agents lost after second multi-GPU step"
     );
 }
