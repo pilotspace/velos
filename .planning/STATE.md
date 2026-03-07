@@ -3,9 +3,9 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: SUMO Replacement Engine
 status: in-progress
-stopped_at: Completed 07-04-PLAN.md
-last_updated: "2026-03-07T16:06:45Z"
-last_activity: 2026-03-07 -- Completed Plan 07-04 (Prediction ensemble with ArcSwap overlay)
+stopped_at: Completed 07-03-PLAN.md (executed after 07-04)
+last_updated: "2026-03-07T16:22:41Z"
+last_activity: 2026-03-07 -- Completed Plan 07-03 (CCH customization & query)
 progress:
   total_phases: 3
   completed_phases: 2
@@ -27,8 +27,8 @@ See: .planning/PROJECT.md (updated 2026-03-07)
 
 Phase: 7 of 7 (Intelligence, Routing & Prediction) -- IN PROGRESS
 Plan: 04 of 04 complete -- Prediction ensemble with ArcSwap overlay
-Status: Plan 07-04 complete
-Last activity: 2026-03-07 -- Completed Plan 07-04 (Prediction ensemble with ArcSwap overlay)
+Status: Plan 07-03 complete (executed after 07-04)
+Last activity: 2026-03-07 -- Completed Plan 07-03 (CCH customization & query)
 
 Progress: [██████████] 100%
 
@@ -99,6 +99,10 @@ Recent decisions affecting current work:
 - [07-04]: Inverse-error softmax for adaptive weights with min floor 0.05
 - [07-04]: Historical matcher flat Vec with 96 slots/edge (24h * 4 day_types) for O(1) lookup
 - [07-04]: Confidence = 1 - (range/mean) normalized inter-model disagreement
+- [07-03]: Fixed topology.rs original_edge_to_cch mapping (CSR sort invalidated pre-sort indices)
+- [07-03]: Binary search for O(log d) edge lookup in triangle enumeration inner loop
+- [07-03]: Symmetric weight model: forward_weight == backward_weight for both search directions
+- [07-03]: Both forward and backward Dijkstra searches use forward star (both go upward in hierarchy)
 
 ### Pending Todos
 
@@ -113,6 +117,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-07T16:06:45Z
-Stopped at: Completed 07-04-PLAN.md
+Last session: 2026-03-07T16:22:41Z
+Stopped at: Completed 07-03-PLAN.md
 Resume file: .planning/phases/07-intelligence-routing-prediction/07-05-PLAN.md
