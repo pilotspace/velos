@@ -200,3 +200,190 @@ fn pedestrian_agents_have_no_car_following_model() {
         "Pedestrians should not have CarFollowingModel, but {ped_with_cf}/{ped_count} do"
     );
 }
+
+// ===========================================================================
+// GPU behavioral differentiation tests (require gpu-tests feature + GPU)
+// ===========================================================================
+
+#[cfg(feature = "gpu-tests")]
+mod gpu_behavior {
+    use velos_core::components::{CarFollowingModel, GpuAgentState};
+    use velos_core::fixed_point::{FixPos, FixSpd};
+    use velos_gpu::compute::{sort_agents_by_lane, ComputeDispatcher};
+    use velos_gpu::device::GpuContext;
+
+    /// Run N GPU wave-front dispatch steps for a set of agents.
+    /// Returns the updated agent states after all steps.
+    fn run_gpu_steps(
+        agents: &[GpuAgentState],
+        steps: u32,
+        dt: f32,
+    ) -> Option<Vec<GpuAgentState>> {
+        let ctx = GpuContext::new_headless()?;
+        let mut dispatcher = ComputeDispatcher::new(&ctx.device);
+
+        let mut current_agents = agents.to_vec();
+
+        for _ in 0..steps {
+            let (offsets, counts, indices) = sort_agents_by_lane(&current_agents);
+            dispatcher.upload_wave_front_data(
+                &ctx.device,
+                &ctx.queue,
+                &current_agents,
+                &offsets,
+                &counts,
+                &indices,
+            );
+
+            let mut encoder = ctx.device.create_command_encoder(&Default::default());
+            dispatcher.dispatch_wave_front(&mut encoder, &ctx.device, &ctx.queue, dt);
+            ctx.queue.submit(std::iter::once(encoder.finish()));
+
+            current_agents = dispatcher.readback_wave_front_agents(&ctx.device, &ctx.queue);
+        }
+
+        Some(current_agents)
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 5: After 50 steps, Krauss agents have lower avg speed than IDM
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn krauss_agents_have_lower_avg_speed_than_idm() {
+        // Create 20 agents on the same lane: 10 IDM, 10 Krauss.
+        // Spread out with generous gaps so they can accelerate freely.
+        let mut agents = Vec::new();
+        for i in 0..20u32 {
+            let cf_model = if i < 10 {
+                CarFollowingModel::Idm as u32
+            } else {
+                CarFollowingModel::Krauss as u32
+            };
+            agents.push(GpuAgentState {
+                edge_id: 0,
+                lane_idx: 0,
+                // Leaders at highest positions, 50m apart so gaps are generous.
+                position: FixPos::from_f64((19 - i) as f64 * 50.0 + 10.0).raw(),
+                lateral: 0,
+                speed: FixSpd::from_f64(8.0).raw(),
+                acceleration: 0,
+                cf_model,
+                rng_state: i * 7 + 42, // Distinct RNG seeds.
+            });
+        }
+
+        let result = run_gpu_steps(&agents, 50, 0.1);
+        let Some(updated) = result else {
+            eprintln!("SKIP: No GPU adapter available");
+            return;
+        };
+
+        // Compute average speed for IDM vs Krauss agents.
+        let mut idm_speed_sum = 0.0f64;
+        let mut krauss_speed_sum = 0.0f64;
+        let mut idm_count = 0u32;
+        let mut krauss_count = 0u32;
+
+        for (i, agent) in updated.iter().enumerate() {
+            let speed = FixSpd::from_raw(agent.speed).to_f64();
+            if agents[i].cf_model == CarFollowingModel::Idm as u32 {
+                idm_speed_sum += speed;
+                idm_count += 1;
+            } else {
+                krauss_speed_sum += speed;
+                krauss_count += 1;
+            }
+        }
+
+        let idm_avg = idm_speed_sum / idm_count as f64;
+        let krauss_avg = krauss_speed_sum / krauss_count as f64;
+
+        eprintln!("IDM avg speed: {idm_avg:.4} m/s ({idm_count} agents)");
+        eprintln!("Krauss avg speed: {krauss_avg:.4} m/s ({krauss_count} agents)");
+
+        // Krauss dawdle (sigma=0.5) should make average speed lower than IDM.
+        // Require at least 5% difference to confirm shader branching works.
+        let diff_pct = (idm_avg - krauss_avg) / idm_avg * 100.0;
+        eprintln!("Speed difference: {diff_pct:.1}% (IDM faster)");
+
+        assert!(
+            krauss_avg < idm_avg,
+            "Krauss avg ({krauss_avg:.4}) should be lower than IDM avg ({idm_avg:.4})"
+        );
+        assert!(
+            diff_pct >= 5.0,
+            "Speed difference {diff_pct:.1}% should be >= 5% to confirm shader branching"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 6: Two identical agents with different cf_model produce different
+    //         speeds after 10 steps.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn identical_agents_different_cf_model_diverge() {
+        // Two agents: same position, speed, gap -- only cf_model differs.
+        // Agent 0 = IDM leader (far ahead, no interaction).
+        // Agent 1 = IDM follower.
+        // Agent 2 = Krauss follower at same position as agent 1.
+        let agents = vec![
+            // Leader (IDM, far ahead).
+            GpuAgentState {
+                edge_id: 0,
+                lane_idx: 0,
+                position: FixPos::from_f64(500.0).raw(),
+                lateral: 0,
+                speed: FixSpd::from_f64(10.0).raw(),
+                acceleration: 0,
+                cf_model: CarFollowingModel::Idm as u32,
+                rng_state: 100,
+            },
+            // Follower A (IDM).
+            GpuAgentState {
+                edge_id: 0,
+                lane_idx: 0,
+                position: FixPos::from_f64(400.0).raw(),
+                lateral: 0,
+                speed: FixSpd::from_f64(10.0).raw(),
+                acceleration: 0,
+                cf_model: CarFollowingModel::Idm as u32,
+                rng_state: 200,
+            },
+            // Follower B (Krauss) -- on a different lane to isolate from IDM follower.
+            GpuAgentState {
+                edge_id: 0,
+                lane_idx: 1,
+                position: FixPos::from_f64(400.0).raw(),
+                lateral: 0,
+                speed: FixSpd::from_f64(10.0).raw(),
+                acceleration: 0,
+                cf_model: CarFollowingModel::Krauss as u32,
+                rng_state: 200,
+            },
+        ];
+
+        let result = run_gpu_steps(&agents, 10, 0.1);
+        let Some(updated) = result else {
+            eprintln!("SKIP: No GPU adapter available");
+            return;
+        };
+
+        let idm_follower_speed = FixSpd::from_raw(updated[1].speed).to_f64();
+        let krauss_follower_speed = FixSpd::from_raw(updated[2].speed).to_f64();
+
+        eprintln!("IDM follower speed after 10 steps: {idm_follower_speed:.4} m/s");
+        eprintln!("Krauss follower speed after 10 steps: {krauss_follower_speed:.4} m/s");
+
+        // The two followers should have different speeds due to different models.
+        let speed_diff = (idm_follower_speed - krauss_follower_speed).abs();
+        eprintln!("Speed difference: {speed_diff:.4} m/s");
+
+        assert!(
+            speed_diff > 0.01,
+            "IDM ({idm_follower_speed:.4}) and Krauss ({krauss_follower_speed:.4}) \
+             should produce different speeds (diff={speed_diff:.6})"
+        );
+    }
+}
