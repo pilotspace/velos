@@ -8,6 +8,7 @@ pub mod adaptive;
 pub mod bpr;
 pub mod ets;
 pub mod historical;
+pub mod overlay;
 
 use adaptive::AdaptiveWeights;
 use bpr::BPRPredictor;
@@ -130,4 +131,83 @@ fn compute_confidence(bpr: &[f32], ets: &[f32], hist: &[f32]) -> Vec<f32> {
             1.0 - disagreement
         })
         .collect()
+}
+
+/// Input data for a prediction update cycle.
+#[derive(Debug)]
+pub struct PredictionInput<'a> {
+    /// Current flow per edge.
+    pub flows: &'a [f32],
+    /// Capacity per edge.
+    pub capacities: &'a [f32],
+    /// Free-flow travel time per edge (seconds).
+    pub free_flow: &'a [f32],
+    /// Most recent actual travel time per edge (seconds).
+    pub actual: &'a [f32],
+    /// Current hour of day (0..23).
+    pub hour: u8,
+    /// Day type: 0=weekday, 1=saturday, 2=sunday, 3=holiday.
+    pub day_type: u8,
+}
+
+/// High-level prediction service that owns the ensemble and overlay store.
+///
+/// Call [`PredictionService::update`] every 60 sim-seconds to recompute
+/// predictions and atomically swap the overlay. Readers access the store
+/// via [`PredictionService::store`] for lock-free reads.
+#[derive(Debug)]
+pub struct PredictionService {
+    ensemble: PredictionEnsemble,
+    store: overlay::PredictionStore,
+    update_interval_sim_seconds: f64,
+    last_update_sim_seconds: f64,
+}
+
+impl PredictionService {
+    /// Create a new prediction service for the given edges.
+    pub fn new(edge_count: usize, free_flow: &[f32]) -> Self {
+        Self {
+            ensemble: PredictionEnsemble::new(edge_count),
+            store: overlay::PredictionStore::new(edge_count, free_flow),
+            update_interval_sim_seconds: 60.0,
+            last_update_sim_seconds: 0.0,
+        }
+    }
+
+    /// Check whether it is time to recompute predictions.
+    pub fn should_update(&self, sim_time: f64) -> bool {
+        sim_time - self.last_update_sim_seconds >= self.update_interval_sim_seconds
+    }
+
+    /// Recompute predictions and atomically swap the overlay.
+    ///
+    /// Should be called when [`should_update`](Self::should_update) returns true.
+    pub fn update(&mut self, input: &PredictionInput<'_>, sim_time: f64) {
+        let (travel_times, confidence) = self.ensemble.compute(
+            input.flows,
+            input.capacities,
+            input.free_flow,
+            input.actual,
+            input.hour,
+            input.day_type,
+        );
+
+        self.store.swap(overlay::PredictionOverlay {
+            edge_travel_times: travel_times,
+            edge_confidence: confidence,
+            timestamp_sim_seconds: sim_time,
+        });
+
+        self.last_update_sim_seconds = sim_time;
+    }
+
+    /// Access the prediction store for lock-free reads.
+    pub fn store(&self) -> &overlay::PredictionStore {
+        &self.store
+    }
+
+    /// Access the ensemble (e.g., to record historical observations).
+    pub fn ensemble_mut(&mut self) -> &mut PredictionEnsemble {
+        &mut self.ensemble
+    }
 }

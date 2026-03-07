@@ -4,7 +4,8 @@ use velos_predict::bpr::BPRPredictor;
 use velos_predict::ets::ETSCorrector;
 use velos_predict::historical::HistoricalMatcher;
 use velos_predict::adaptive::AdaptiveWeights;
-use velos_predict::PredictionEnsemble;
+use velos_predict::overlay::{PredictionOverlay, PredictionStore};
+use velos_predict::{PredictionEnsemble, PredictionInput, PredictionService};
 
 // ── BPR tests ──────────────────────────────────────────────────────
 
@@ -217,4 +218,101 @@ fn ensemble_compute_returns_predictions_and_confidence() {
     for &c in &conf {
         assert!(c >= 0.0 && c <= 1.0, "confidence out of range: {c}");
     }
+}
+
+// ── PredictionOverlay + ArcSwap tests ──────────────────────────────
+
+#[test]
+fn store_current_returns_initial_free_flow() {
+    let ff = [60.0_f32, 30.0];
+    let store = PredictionStore::new(2, &ff);
+    let guard = store.current();
+    assert_eq!(guard.edge_travel_times.len(), 2);
+    assert!((guard.edge_travel_times[0] - 60.0).abs() < 1e-6);
+    assert!((guard.edge_travel_times[1] - 30.0).abs() < 1e-6);
+    assert!((guard.edge_confidence[0] - 1.0).abs() < 1e-6);
+}
+
+#[test]
+fn store_swap_replaces_atomically() {
+    let ff = [60.0_f32];
+    let store = PredictionStore::new(1, &ff);
+    let new_overlay = PredictionOverlay {
+        edge_travel_times: vec![120.0],
+        edge_confidence: vec![0.8],
+        timestamp_sim_seconds: 60.0,
+    };
+    store.swap(new_overlay);
+    let guard = store.current();
+    assert!((guard.edge_travel_times[0] - 120.0).abs() < 1e-6);
+    assert!((guard.timestamp_sim_seconds - 60.0).abs() < 1e-6);
+}
+
+#[test]
+fn store_guard_survives_swap() {
+    let ff = [60.0_f32];
+    let store = PredictionStore::new(1, &ff);
+
+    // Take guard before swap
+    let old_guard = store.current();
+    assert!((old_guard.edge_travel_times[0] - 60.0).abs() < 1e-6);
+
+    // Swap in new data
+    store.swap(PredictionOverlay {
+        edge_travel_times: vec![999.0],
+        edge_confidence: vec![0.5],
+        timestamp_sim_seconds: 120.0,
+    });
+
+    // Old guard still reads old data (no corruption)
+    assert!((old_guard.edge_travel_times[0] - 60.0).abs() < 1e-6);
+
+    // New guard reads new data
+    let new_guard = store.current();
+    assert!((new_guard.edge_travel_times[0] - 999.0).abs() < 1e-6);
+}
+
+#[test]
+fn overlay_correct_length() {
+    let ff = [10.0_f32, 20.0, 30.0];
+    let store = PredictionStore::new(3, &ff);
+    let guard = store.current();
+    assert_eq!(guard.edge_travel_times.len(), 3);
+    assert_eq!(guard.edge_confidence.len(), 3);
+}
+
+#[test]
+fn prediction_service_update_swaps_overlay() {
+    let ff = [60.0_f32, 30.0];
+    let mut svc = PredictionService::new(2, &ff);
+
+    assert!(!svc.should_update(30.0), "should not update before interval");
+    assert!(svc.should_update(60.0), "should update at interval");
+
+    let flows = [80.0_f32, 50.0];
+    let caps = [100.0_f32, 100.0];
+    let actual = [70.0_f32, 35.0];
+    let input = PredictionInput {
+        flows: &flows,
+        capacities: &caps,
+        free_flow: &ff,
+        actual: &actual,
+        hour: 8,
+        day_type: 0,
+    };
+    svc.update(&input, 60.0);
+
+    let guard = svc.store().current();
+    assert!((guard.timestamp_sim_seconds - 60.0).abs() < 1e-6);
+    // Travel times should be updated (not free-flow anymore for congested edges)
+    assert_eq!(guard.edge_travel_times.len(), 2);
+}
+
+#[test]
+fn prediction_service_store_clone() {
+    let ff = [60.0_f32];
+    let svc = PredictionService::new(1, &ff);
+    let handle = svc.store().clone_handle();
+    let guard = handle.current();
+    assert!((guard.edge_travel_times[0] - 60.0).abs() < 1e-6);
 }
