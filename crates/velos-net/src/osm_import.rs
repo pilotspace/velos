@@ -21,6 +21,10 @@ struct RoadProperties {
     lane_count: u8,
     speed_limit_mps: f64,
     oneway: bool,
+    /// Whether motorcycle=designated or motorcycle=yes tag is present.
+    motorcycle_designated: bool,
+    /// Road width in metres from `width` tag, if available.
+    width_m: Option<f64>,
 }
 
 /// Import an OSM PBF file into a directed road graph.
@@ -113,6 +117,14 @@ pub fn import_osm(
 
             let geometry = vec![pos_a, pos_b];
 
+            // Detect motorbike-only: motorcycle=designated, or narrow
+            // service/residential roads (width < 4m).
+            let motorbike_only = props.motorcycle_designated
+                || (matches!(
+                    props.road_class,
+                    RoadClass::Service | RoadClass::Residential
+                ) && props.width_m.is_some_and(|w| w < 4.0));
+
             // Forward edge (always).
             graph.add_edge(
                 a,
@@ -124,6 +136,8 @@ pub fn import_osm(
                     oneway: props.oneway,
                     road_class: props.road_class,
                     geometry: geometry.clone(),
+                    motorbike_only,
+                    time_windows: None,
                 },
             );
 
@@ -139,6 +153,8 @@ pub fn import_osm(
                         oneway: false,
                         road_class: props.road_class,
                         geometry: vec![pos_b, pos_a],
+                        motorbike_only,
+                        time_windows: None,
                     },
                 );
             }
@@ -161,6 +177,8 @@ fn parse_road_tags(way: &osmpbf::Way) -> Option<RoadProperties> {
     let mut lanes_tag = None;
     let mut maxspeed_tag = None;
     let mut oneway_tag = None;
+    let mut motorcycle_tag = None;
+    let mut width_tag = None;
 
     for (key, value) in way.tags() {
         match key {
@@ -168,15 +186,20 @@ fn parse_road_tags(way: &osmpbf::Way) -> Option<RoadProperties> {
             "lanes" => lanes_tag = Some(value),
             "maxspeed" => maxspeed_tag = Some(value),
             "oneway" => oneway_tag = Some(value),
+            "motorcycle" => motorcycle_tag = Some(value),
+            "width" => width_tag = Some(value),
             _ => {}
         }
     }
 
     let road_class = match highway? {
+        "motorway" | "motorway_link" => RoadClass::Motorway,
+        "trunk" | "trunk_link" => RoadClass::Trunk,
         "primary" | "primary_link" => RoadClass::Primary,
         "secondary" | "secondary_link" => RoadClass::Secondary,
         "tertiary" | "tertiary_link" => RoadClass::Tertiary,
         "residential" => RoadClass::Residential,
+        "service" => RoadClass::Service,
         _ => return None,
     };
 
@@ -191,29 +214,46 @@ fn parse_road_tags(way: &osmpbf::Way) -> Option<RoadProperties> {
 
     let oneway = matches!(oneway_tag, Some("yes") | Some("1") | Some("true"));
 
+    let motorcycle_designated =
+        matches!(motorcycle_tag, Some("designated") | Some("yes"));
+
+    let width_m = width_tag.and_then(|v| {
+        v.trim_end_matches(" m")
+            .trim_end_matches('m')
+            .trim()
+            .parse::<f64>()
+            .ok()
+    });
+
     Some(RoadProperties {
         road_class,
         lane_count,
         speed_limit_mps,
         oneway,
+        motorcycle_designated,
+        width_m,
     })
 }
 
 /// Infer lane count from road class when `lanes` tag is missing.
 fn infer_lanes(road_class: RoadClass) -> u8 {
     match road_class {
+        RoadClass::Motorway | RoadClass::Trunk => 3,
         RoadClass::Primary | RoadClass::Secondary => 2,
-        RoadClass::Tertiary | RoadClass::Residential => 1,
+        RoadClass::Tertiary | RoadClass::Residential | RoadClass::Service => 1,
     }
 }
 
 /// Default speed limit in km/h by road class (HCMC urban defaults).
 fn default_speed_kmh(road_class: RoadClass) -> f64 {
     match road_class {
+        RoadClass::Motorway => 80.0,
+        RoadClass::Trunk => 60.0,
         RoadClass::Primary => 50.0,
         RoadClass::Secondary => 40.0,
         RoadClass::Tertiary => 30.0,
         RoadClass::Residential => 20.0,
+        RoadClass::Service => 15.0,
     }
 }
 

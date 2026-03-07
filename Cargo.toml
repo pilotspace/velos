@@ -25,3 +25,7 @@ rand = "0.8"
 egui = "0.33"
 egui-wgpu = "0.33"
 egui-winit = "0.33"
+quick-xml = "0.37"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+postcard = { version = "1", features = ["alloc"] }

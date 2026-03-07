@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<net version="1.20" junctionCornerDetail="5" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+     xsi:noNamespaceSchemaLocation="http://sumo.dlr.de/xsd/net_file.xsd">
+
+    <location netOffset="0.00,0.00" convBoundary="0.00,0.00,200.00,100.00"
+              origBoundary="106.65,10.76,106.70,10.80" projParameter="+proj=utm +zone=48 +ellps=WGS84"/>
+
+    <!-- External edges (should be imported) -->
+    <edge id="e0" from="j0" to="j1" priority="6" type="highway.primary" spreadType="center">
+        <lane id="e0_0" index="0" speed="13.89" length="100.00" shape="0.00,48.40 100.00,48.40"/>
+        <lane id="e0_1" index="1" speed="13.89" length="100.00" shape="0.00,51.60 100.00,51.60"/>
+    </edge>
+
+    <edge id="e1" from="j1" to="j2" priority="4" type="highway.secondary">
+        <lane id="e1_0" index="0" speed="11.11" length="120.00" shape="100.00,48.40 200.00,98.40"/>
+    </edge>
+
+    <edge id="e2" from="j0" to="j2" priority="3" type="highway.tertiary">
+        <lane id="e2_0" index="0" speed="8.33" length="150.00" shape="0.00,48.40 200.00,98.40"/>
+    </edge>
+
+    <edge id="e3" from="j2" to="j0" priority="2" type="highway.residential">
+        <lane id="e3_0" index="0" speed="8.33" length="150.00" shape="200.00,98.40 0.00,48.40"/>
+    </edge>
+
+    <!-- Internal edges (should be filtered out) -->
+    <edge id=":j1_0" function="internal">
+        <lane id=":j1_0_0" index="0" speed="13.89" length="5.00" shape="98.00,48.40 102.00,48.40"/>
+    </edge>
+
+    <edge id=":j1_1" function="internal">
+        <lane id=":j1_1_0" index="0" speed="11.11" length="5.00" shape="100.00,46.40 100.00,50.40"/>
+    </edge>
+
+    <!-- Junctions -->
+    <junction id="j0" type="priority" x="0.00" y="50.00" incLanes="e3_0" intLanes="" shape="-1.60,53.20 1.60,53.20 1.60,46.80 -1.60,46.80"/>
+
+    <junction id="j1" type="traffic_light" x="100.00" y="50.00" incLanes="e0_0 e0_1" intLanes=":j1_0_0 :j1_1_0"
+              shape="98.40,53.20 101.60,53.20 101.60,46.80 98.40,46.80" customParam="someValue"/>
+
+    <junction id="j2" type="priority" x="200.00" y="100.00" incLanes="e1_0 e2_0" intLanes=""
+              shape="198.40,101.60 201.60,101.60 201.60,96.80 198.40,96.80"/>
+
+    <!-- Connections -->
+    <connection from="e0" to="e1" fromLane="0" toLane="0" via=":j1_0_0" dir="s" state="o"/>
+    <connection from="e0" to="e1" fromLane="1" toLane="0" via=":j1_0_0" dir="s" state="o"/>
+    <connection from="e1" to="e3" fromLane="0" toLane="0" dir="r" state="o"/>
+    <connection from="e3" to="e0" fromLane="0" toLane="0" dir="s" state="o"/>
+
+    <!-- Traffic light logic -->
+    <tlLogic id="tl_j1" type="static" programID="0" offset="0">
+        <phase duration="30" state="GGrr"/>
+        <phase duration="5" state="yyrr"/>
+        <phase duration="25" state="rrGG"/>
+        <phase duration="5" state="rryy"/>
+    </tlLogic>
+
+    <!-- Roundabout -->
+    <roundabout nodes="j1 j2" edges="e1 e3"/>
+
+</net>
