@@ -3,12 +3,10 @@
 //! These tests are CPU-only: they verify partition logic and boundary
 //! transfer protocol without requiring a GPU adapter.
 
-use std::collections::HashMap;
-
 use petgraph::graph::DiGraph;
 use velos_core::components::GpuAgentState;
 use velos_gpu::multi_gpu::{BoundaryAgent, GpuPartition, MultiGpuScheduler};
-use velos_gpu::partition::{partition_edges, partition_network, PartitionAssignment};
+use velos_gpu::partition::{partition_edges, partition_network};
 use velos_net::{RoadEdge, RoadGraph, RoadNode};
 
 /// Build a synthetic grid road network with `n` x `n` intersections.
