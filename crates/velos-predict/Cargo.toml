@@ -1,0 +1,14 @@
+[package]
+name = "velos-predict"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "BPR + ETS + historical prediction ensemble with ArcSwap overlay"
+
+[dependencies]
+arc-swap.workspace = true
+serde.workspace = true
+log.workspace = true
+
+[dev-dependencies]

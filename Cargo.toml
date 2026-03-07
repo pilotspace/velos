@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/velos-core", "crates/velos-gpu", "crates/velos-net", "crates/velos-vehicle", "crates/velos-demand", "crates/velos-signal", "crates/velos-meso"]
+members = ["crates/velos-core", "crates/velos-gpu", "crates/velos-net", "crates/velos-vehicle", "crates/velos-demand", "crates/velos-signal", "crates/velos-meso", "crates/velos-predict"]
 
 [workspace.package]
 version = "0.1.0"
@@ -29,3 +29,4 @@ quick-xml = "0.37"
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 postcard = { version = "1", features = ["alloc"] }
+arc-swap = "1"
