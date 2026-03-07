@@ -74,13 +74,13 @@ Plans:
   3. The prediction ensemble updates edge weights every 60 sim-seconds, and agents receiving prediction-informed routes avoid corridors that are currently free-flowing but predicted to congest
   4. GPU perception phase produces per-agent awareness of leader vehicle, signal state, traffic signs, and nearby agents, feeding the evaluation phase that outputs should_reroute decisions
   5. Staggered reroute evaluation processes 1K agents/step across the full population, with immediate triggers firing for blocked edges and emergency vehicles
-**Plans:** 4/6 plans executed
+**Plans:** 5/6 plans executed
 Plans:
-- [ ] 07-01-PLAN.md -- CCH core: node ordering + contraction + binary disk cache
-- [ ] 07-02-PLAN.md -- Multi-factor cost function + 8 agent profiles + demand wiring
-- [ ] 07-03-PLAN.md -- CCH weight customization + bidirectional Dijkstra query + rayon parallel queries
-- [ ] 07-04-PLAN.md -- Prediction ensemble (velos-predict crate): BPR + ETS + historical + ArcSwap overlay
-- [ ] 07-05-PLAN.md -- GPU perception kernel (perception.wgsl + PerceptionPipeline)
+- [x] 07-01-PLAN.md -- CCH core: node ordering + contraction + binary disk cache
+- [x] 07-02-PLAN.md -- Multi-factor cost function + 8 agent profiles + demand wiring
+- [x] 07-03-PLAN.md -- CCH weight customization + bidirectional Dijkstra query + rayon parallel queries
+- [x] 07-04-PLAN.md -- Prediction ensemble (velos-predict crate): BPR + ETS + historical + ArcSwap overlay
+- [x] 07-05-PLAN.md -- GPU perception kernel (perception.wgsl + PerceptionPipeline)
 - [ ] 07-06-PLAN.md -- Reroute scheduler + CPU evaluation + simulation integration
 
 ## Progress
@@ -96,4 +96,4 @@ Phases 5 through 7 execute sequentially. Each phase depends on the prior phase.
 | 4. MOBIL Wiring + Motorbike Jam Fix + Performance | v1.0 | 3/3 | Complete | 2026-03-07 |
 | 5. Foundation & GPU Engine | v1.1 | 6/6 | Complete | 2026-03-07 |
 | 6. Agent Models & Signal Control | v1.1 | 1/7 | In progress | - |
-| 7. Intelligence, Routing & Prediction | 4/6 | In Progress|  | - |
+| 7. Intelligence, Routing & Prediction | v1.1 | 5/6 | In Progress | - |

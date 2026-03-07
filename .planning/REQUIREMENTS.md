@@ -46,7 +46,7 @@ Prove VELOS can replace SUMO: reimplement all core SUMO features, add agent inte
 
 - [x] **INT-01**: Multi-factor pathfinding cost function: time, comfort, safety, fuel, signal delay, prediction penalty
 - [x] **INT-02**: Configurable agent profiles (Commuter, Bus, Truck, Emergency, Tourist, Teen, Senior, Cyclist) with per-profile cost weights
-- [ ] **INT-03**: GPU perception phase: sense leader vehicle, signal state, traffic signs, nearby agents, global congestion map
+- [x] **INT-03**: GPU perception phase: sense leader vehicle, signal state, traffic signs, nearby agents, global congestion map
 - [ ] **INT-04**: GPU evaluation phase: cost comparison current route vs alternative, output should_reroute flag + cost_delta
 - [ ] **INT-05**: Staggered reroute evaluation (1K agents/step, ~50s full cycle) with immediate triggers for blocked edges, emergency vehicles, and prediction flags
 
@@ -153,7 +153,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | SIG-05 | Phase 6 | Complete |
 | INT-01 | Phase 7 | Complete |
 | INT-02 | Phase 7 | Complete |
-| INT-03 | Phase 7 | Pending |
+| INT-03 | Phase 7 | Complete |
 | INT-04 | Phase 7 | Pending |
 | INT-05 | Phase 7 | Pending |
 | RTE-01 | Phase 7 | Complete |

@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: SUMO Replacement Engine
 status: in-progress
-stopped_at: Completed 07-03-PLAN.md (executed after 07-04)
-last_updated: "2026-03-07T16:22:41Z"
-last_activity: 2026-03-07 -- Completed Plan 07-03 (CCH customization & query)
+stopped_at: Completed 07-05-PLAN.md
+last_updated: "2026-03-07T16:29:37Z"
+last_activity: 2026-03-07 -- Completed Plan 07-05 (GPU perception kernel)
 progress:
   total_phases: 3
   completed_phases: 2
-  total_plans: 17
+  total_plans: 18
   completed_plans: 17
-  percent: 100
+  percent: 94
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-03-07)
 ## Current Position
 
 Phase: 7 of 7 (Intelligence, Routing & Prediction) -- IN PROGRESS
-Plan: 04 of 04 complete -- Prediction ensemble with ArcSwap overlay
-Status: Plan 07-03 complete (executed after 07-04)
-Last activity: 2026-03-07 -- Completed Plan 07-03 (CCH customization & query)
+Plan: 05 of 06 complete -- GPU perception kernel (perception.wgsl + PerceptionPipeline)
+Status: Plan 07-05 complete
+Last activity: 2026-03-07 -- Completed Plan 07-05 (GPU perception kernel)
 
-Progress: [██████████] 100%
+Progress: [█████████░] 83%
 
 ## Accumulated Context
 
@@ -103,6 +103,10 @@ Recent decisions affecting current work:
 - [07-03]: Binary search for O(log d) edge lookup in triangle enumeration inner loop
 - [07-03]: Symmetric weight model: forward_weight == backward_weight for both search directions
 - [07-03]: Both forward and backward Dijkstra searches use forward star (both go upward in hierarchy)
+- [07-05]: PerceptionBindings struct groups 6 buffer refs to satisfy clippy too-many-arguments
+- [07-05]: Linear agent scan for leader detection (acceptable for 1-20 agents per edge)
+- [07-05]: Signal state indexed by edge_id (simplified one-signal-per-edge model)
+- [07-05]: Separate bind group layout from wave_front to avoid binding conflicts
 
 ### Pending Todos
 
@@ -117,6 +121,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-07T16:22:41Z
-Stopped at: Completed 07-03-PLAN.md
-Resume file: .planning/phases/07-intelligence-routing-prediction/07-05-PLAN.md
+Last session: 2026-03-07T16:29:37Z
+Stopped at: Completed 07-05-PLAN.md
+Resume file: .planning/phases/07-intelligence-routing-prediction/07-06-PLAN.md
