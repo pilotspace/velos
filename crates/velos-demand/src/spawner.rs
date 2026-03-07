@@ -9,8 +9,10 @@ use rand::distributions::WeightedIndex;
 use rand::prelude::Distribution;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
+use velos_core::cost::AgentProfile;
 
 use crate::od_matrix::{OdMatrix, Zone};
+use crate::profile::{assign_profile, ProfileDistribution};
 use crate::tod_profile::TodProfile;
 
 /// Vehicle type for spawn requests. Kept local to avoid circular dependency
@@ -42,6 +44,8 @@ pub struct SpawnRequest {
     pub destination: Zone,
     /// Type of vehicle/agent to spawn.
     pub vehicle_type: SpawnVehicleType,
+    /// Agent profile for cost-weighted route choice.
+    pub profile: AgentProfile,
 }
 
 /// Combines an OD matrix and ToD profile to generate stochastic spawn requests.
@@ -52,6 +56,7 @@ pub struct Spawner {
     tod: TodProfile,
     rng: StdRng,
     vehicle_dist: WeightedIndex<f64>,
+    profile_dist: ProfileDistribution,
 }
 
 impl Spawner {
@@ -64,7 +69,14 @@ impl Spawner {
             tod,
             rng: StdRng::seed_from_u64(seed),
             vehicle_dist,
+            profile_dist: ProfileDistribution::default(),
         }
+    }
+
+    /// Create a spawner with a custom profile distribution.
+    pub fn with_profile_distribution(mut self, dist: ProfileDistribution) -> Self {
+        self.profile_dist = dist;
+        self
     }
 
     /// Generate spawn requests for a given simulation hour and timestep (seconds).
@@ -97,10 +109,12 @@ impl Spawner {
                     1 => SpawnVehicleType::Car,
                     _ => SpawnVehicleType::Pedestrian,
                 };
+                let profile = assign_profile(vtype, &self.profile_dist, &mut self.rng);
                 spawns.push(SpawnRequest {
                     origin: from,
                     destination: to,
                     vehicle_type: vtype,
+                    profile,
                 });
             }
         }

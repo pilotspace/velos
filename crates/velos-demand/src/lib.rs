@@ -7,11 +7,13 @@
 pub mod error;
 pub mod gtfs;
 pub mod od_matrix;
+pub mod profile;
 pub mod spawner;
 pub mod tod_profile;
 
 pub use error::DemandError;
 pub use gtfs::{load_gtfs_csv, BusRoute, BusSchedule, GtfsStop};
 pub use od_matrix::{NamedZone, OdMatrix, Zone};
+pub use profile::{assign_profile, ProfileDistribution};
 pub use spawner::{SpawnRequest, SpawnVehicleType, Spawner};
 pub use tod_profile::TodProfile;
