@@ -7,5 +7,9 @@ license.workspace = true
 description = "IDM car-following, MOBIL lane-change, VehicleType enum, and gridlock detection"
 
 [dependencies]
-thiserror.workspace = true
 log.workspace = true
+rand.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+rand = { workspace = true }
