@@ -1,0 +1,15 @@
+[package]
+name = "velos-meso"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Mesoscopic queue model with BPR travel time and graduated buffer zone transitions"
+
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true
+toml.workspace = true
+velos-vehicle = { path = "../velos-vehicle" }
+
+[dev-dependencies]

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/velos-core", "crates/velos-gpu", "crates/velos-net", "crates/velos-vehicle", "crates/velos-demand", "crates/velos-signal"]
+members = ["crates/velos-core", "crates/velos-gpu", "crates/velos-net", "crates/velos-vehicle", "crates/velos-demand", "crates/velos-signal", "crates/velos-meso"]
 
 [workspace.package]
 version = "0.1.0"
