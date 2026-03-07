@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-03-07)
 ## Current Position
 
 Phase: 7 of 7 (Intelligence, Routing & Prediction) -- IN PROGRESS
-Plan: 05 of 06 complete -- GPU perception kernel (perception.wgsl + PerceptionPipeline)
-Status: Plan 07-05 complete
-Last activity: 2026-03-07 -- Completed Plan 07-05 (GPU perception kernel)
+Plan: 06 of 06 complete -- CPU reroute scheduler with staggered evaluation
+Status: Plan 07-06 complete
+Last activity: 2026-03-07 -- Completed Plan 07-06 (Reroute evaluation & scheduling)
 
-Progress: [█████████░] 83%
+Progress: [██████████] 100%
 
 ## Accumulated Context
 
@@ -107,6 +107,10 @@ Recent decisions affecting current work:
 - [07-05]: Linear agent scan for leader detection (acceptable for 1-20 agents per edge)
 - [07-05]: Signal state indexed by edge_id (simplified one-signal-per-edge model)
 - [07-05]: Separate bind group layout from wave_front to avoid binding conflicts
+- [07-06]: PerceptionSnapshot in velos-core avoids circular dependency on velos-gpu PerceptionResult
+- [07-06]: RouteEvalContext struct decouples evaluate_reroute from CCH/ECS for pure-logic testability
+- [07-06]: EdgeNodeMap separate from CCHRouter (CCH topology is graph-independent)
+- [07-06]: sim_reroute.rs follows existing SimWorld split pattern for file size compliance
 
 ### Pending Todos
 
@@ -121,6 +125,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-07T16:29:37Z
-Stopped at: Completed 07-05-PLAN.md
-Resume file: .planning/phases/07-intelligence-routing-prediction/07-06-PLAN.md
+Last session: 2026-03-07T16:33:23Z
+Stopped at: Completed 07-06-PLAN.md
+Resume file: Phase 7 complete
