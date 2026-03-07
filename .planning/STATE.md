@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: SUMO Replacement Engine
-status: in-progress
-stopped_at: Completed 06-03-PLAN.md
-last_updated: "2026-03-07T14:38:49.778Z"
-last_activity: 2026-03-07 -- Completed Plan 06-04 (Emergency vehicle priority)
+status: completed
+stopped_at: Completed 06-07-PLAN.md
+last_updated: "2026-03-07T14:49:55.713Z"
+last_activity: 2026-03-07 -- Completed Plan 06-07 (Mesoscopic queue model)
 progress:
   total_phases: 3
   completed_phases: 1
   total_plans: 13
-  completed_plans: 10
-  percent: 43
+  completed_plans: 11
+  percent: 85
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-03-07)
 ## Current Position
 
 Phase: 6 of 7 (Agent Models & Signal Control) -- IN PROGRESS
-Plan: 04 complete -- Emergency vehicle priority
-Status: Plan 06-04 complete, ready for Plan 06-05
-Last activity: 2026-03-07 -- Completed Plan 06-04 (Emergency vehicle priority)
+Plan: 07 complete -- Mesoscopic queue model
+Status: Plan 06-07 complete, phase 6 complete
+Last activity: 2026-03-07 -- Completed Plan 06-07 (Mesoscopic queue model)
 
-Progress: [████░-----] 43%
+Progress: [█████████░] 85%
 
 ## Accumulated Context
 
@@ -74,6 +74,11 @@ Recent decisions affecting current work:
 - [06-04]: Emergency yield cone: 50m range, 90-degree cone (45-degree half-angle) for siren detection
 - [06-04]: emergency_count replaces _pad in WaveFrontParams -- GPU shader early-exits when 0
 - [06-04]: EmergencyVehicle buffer at binding 5, max 16 entries, pre-allocated
+- [06-07]: BPR beta fast-path multiplication for beta=4.0, powf fallback for non-standard values
+- [06-07]: ZoneConfig defaults unconfigured edges to Micro (safe default: full simulation)
+- [06-07]: BufferZone::should_insert uses static thresholds (100m distance, 2.0 m/s speed diff)
+- [06-07]: smoothstep (3x^2-2x^3) for C1-continuous buffer zone IDM interpolation
+- [Phase 06]: BPR beta fast-path multiplication for beta=4.0, powf fallback for non-standard
 
 ### Pending Todos
 
@@ -88,6 +93,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-07T14:38:49.775Z
-Stopped at: Completed 06-03-PLAN.md
+Last session: 2026-03-07T14:49:49.865Z
+Stopped at: Completed 06-07-PLAN.md
 Resume file: None
