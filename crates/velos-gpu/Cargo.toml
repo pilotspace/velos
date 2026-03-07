@@ -33,3 +33,11 @@ velos-demand = { path = "../velos-demand" }
 velos-signal = { path = "../velos-signal" }
 rand = { workspace = true }
 petgraph = { workspace = true }
+rayon = "1"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "dispatch"
+harness = false

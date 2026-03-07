@@ -317,7 +317,11 @@ impl ComputeDispatcher {
             });
             pass.set_pipeline(&self.wf_pipeline);
             pass.set_bind_group(0, &bind_group, &[]);
-            pass.dispatch_workgroups(self.wave_front_lane_count, 1, 1);
+            // Use 2D dispatch for > 65535 lanes (wgpu limit per dimension).
+            const MAX_WG: u32 = 65535;
+            let x = self.wave_front_lane_count.min(MAX_WG);
+            let y = self.wave_front_lane_count.div_ceil(MAX_WG);
+            pass.dispatch_workgroups(x, y, 1);
         }
 
         self.step_counter += 1;

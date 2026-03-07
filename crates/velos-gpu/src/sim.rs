@@ -30,8 +30,18 @@ use velos_vehicle::social_force::{self, PedestrianNeighbor, SocialForceParams};
 use velos_vehicle::sublane::SublaneParams;
 
 use crate::compute::{sort_agents_by_lane, ComputeDispatcher};
+use crate::multi_gpu::MultiGpuScheduler;
+use crate::partition::partition_network;
 use crate::renderer::AgentInstance;
 use crate::sim_snapshot::AgentSnapshot;
+
+/// Partition mode for multi-GPU support.
+pub enum PartitionMode {
+    /// Single GPU: all agents dispatched via one ComputeDispatcher.
+    Single,
+    /// Multiple logical partitions (same physical GPU, separate buffers).
+    Multi(MultiGpuScheduler),
+}
 
 /// Simulation run state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -102,6 +112,8 @@ pub struct SimWorld {
     pub(crate) zone_centroids: HashMap<Zone, [f64; 2]>,
     pub(crate) sublane_params: SublaneParams,
     pub(crate) social_force_params: SocialForceParams,
+    /// Partition mode: Single (default) or Multi for logical multi-GPU partitions.
+    pub partition_mode: PartitionMode,
 }
 
 impl SimWorld {
@@ -172,7 +184,23 @@ impl SimWorld {
             zone_centroids,
             sublane_params: SublaneParams::default(),
             social_force_params: SocialForceParams::default(),
+            partition_mode: PartitionMode::Single,
         }
+    }
+
+    /// Enable multi-GPU mode by partitioning the road graph into `k` logical partitions.
+    ///
+    /// Each partition gets its own buffer allocations and uses the boundary
+    /// agent outbox/inbox protocol for agent transfer. On single physical GPU,
+    /// all partitions share the same Device/Queue.
+    pub fn enable_multi_gpu(&mut self, k: u32) {
+        let assignment = partition_network(&self.road_graph, k);
+        log::info!(
+            "Multi-GPU enabled: {} partitions, {} boundary edges",
+            assignment.partition_count,
+            assignment.boundary_edges.len()
+        );
+        self.partition_mode = PartitionMode::Multi(MultiGpuScheduler::new(assignment));
     }
 
     pub fn reset(&mut self) {
@@ -184,6 +212,7 @@ impl SimWorld {
         self.spawner = Spawner::new(Self::boosted_od(), TodProfile::hcmc_weekday(), 42);
         self.sublane_params = SublaneParams::default();
         self.social_force_params = SocialForceParams::default();
+        self.partition_mode = PartitionMode::Single;
         for (_, ctrl) in &mut self.signal_controllers {
             ctrl.reset();
         }

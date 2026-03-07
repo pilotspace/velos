@@ -171,7 +171,11 @@ fn wave_front_update(
         return;
     }
 
-    let lane_idx = wg_id.x;
+    // 2D dispatch to support > 65535 lanes: lane = x + y * 65535
+    let lane_idx = wg_id.x + wg_id.y * 65535u;
+    if lane_idx >= arrayLength(&lane_counts) {
+        return;
+    }
     let count = lane_counts[lane_idx];
     if count == 0u {
         return;
