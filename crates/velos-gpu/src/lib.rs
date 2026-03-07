@@ -24,7 +24,7 @@ pub use buffers::{BufferPool, GpuKinematics, GpuPosition};
 pub use camera::Camera2D;
 pub use compute::ComputeDispatcher;
 pub use ped_adaptive::{GpuPedestrian, PedestrianAdaptiveParams, PedestrianAdaptivePipeline};
-pub use perception::{PerceptionParams, PerceptionPipeline, PerceptionResult};
+pub use perception::{PerceptionBindings, PerceptionParams, PerceptionPipeline, PerceptionResult};
 pub use device::GpuContext;
 pub use error::GpuError;
 pub use renderer::{AgentInstance, Renderer};

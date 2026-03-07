@@ -52,6 +52,24 @@ const _: () = assert!(std::mem::size_of::<PerceptionParams>() == 16);
 
 const WORKGROUP_SIZE: u32 = 256;
 
+/// Input buffer references for perception bind group creation.
+///
+/// Groups the 6 input buffers to avoid too-many-arguments clippy warning.
+pub struct PerceptionBindings<'a> {
+    /// Agent state buffer (from ComputeDispatcher::agent_buffer()).
+    pub agent_buffer: &'a wgpu::Buffer,
+    /// Lane agent index buffer (from ComputeDispatcher::lane_agents_buffer()).
+    pub lane_agents_buffer: &'a wgpu::Buffer,
+    /// Signal state buffer (one entry per edge).
+    pub signal_buffer: &'a wgpu::Buffer,
+    /// Traffic sign buffer (GpuSign entries).
+    pub sign_buffer: &'a wgpu::Buffer,
+    /// Congestion grid heatmap (flat array, grid_height * grid_width).
+    pub congestion_grid_buffer: &'a wgpu::Buffer,
+    /// Per-edge travel time ratio (current / free_flow).
+    pub edge_travel_ratio_buffer: &'a wgpu::Buffer,
+}
+
 /// GPU perception pipeline with separate bind group from wave_front.
 ///
 /// Reads agent buffer (from ComputeDispatcher), signal/sign/congestion buffers,
@@ -157,13 +175,14 @@ impl PerceptionPipeline {
     pub fn create_bind_group(
         &self,
         device: &wgpu::Device,
-        agent_buffer: &wgpu::Buffer,
-        lane_agents_buffer: &wgpu::Buffer,
-        signal_buffer: &wgpu::Buffer,
-        sign_buffer: &wgpu::Buffer,
-        congestion_grid_buffer: &wgpu::Buffer,
-        edge_travel_ratio_buffer: &wgpu::Buffer,
+        bindings: &PerceptionBindings<'_>,
     ) -> wgpu::BindGroup {
+        let agent_buffer = bindings.agent_buffer;
+        let lane_agents_buffer = bindings.lane_agents_buffer;
+        let signal_buffer = bindings.signal_buffer;
+        let sign_buffer = bindings.sign_buffer;
+        let congestion_grid_buffer = bindings.congestion_grid_buffer;
+        let edge_travel_ratio_buffer = bindings.edge_travel_ratio_buffer;
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("perception_bg"),
             layout: &self.bind_group_layout,
