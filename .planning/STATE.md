@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: SUMO Replacement Engine
 status: in-progress
-stopped_at: Completed 07-02-PLAN.md
-last_updated: "2026-03-07T16:06:00Z"
-last_activity: 2026-03-07 -- Completed Plan 07-02 (Multi-factor cost function & agent profiles)
+stopped_at: Completed 07-04-PLAN.md
+last_updated: "2026-03-07T16:06:45Z"
+last_activity: 2026-03-07 -- Completed Plan 07-04 (Prediction ensemble with ArcSwap overlay)
 progress:
   total_phases: 3
   completed_phases: 2
   total_plans: 17
-  completed_plans: 15
-  percent: 91
+  completed_plans: 17
+  percent: 100
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-03-07)
 ## Current Position
 
 Phase: 7 of 7 (Intelligence, Routing & Prediction) -- IN PROGRESS
-Plan: 02 of 04 complete -- Multi-factor cost function & agent profiles
-Status: Plan 07-02 complete
-Last activity: 2026-03-07 -- Completed Plan 07-02 (Multi-factor cost function & agent profiles)
+Plan: 04 of 04 complete -- Prediction ensemble with ArcSwap overlay
+Status: Plan 07-04 complete
+Last activity: 2026-03-07 -- Completed Plan 07-04 (Prediction ensemble with ArcSwap overlay)
 
-Progress: [█████████░] 91%
+Progress: [██████████] 100%
 
 ## Accumulated Context
 
@@ -95,6 +95,10 @@ Recent decisions affecting current work:
 - [07-02]: RoadClass duplicated in cost.rs to avoid velos-core -> velos-net circular dependency
 - [07-02]: r#gen() syntax for Rust 2024 edition (gen is reserved keyword)
 - [07-02]: Task 3 (EdgeAttributes heuristics) merged into Task 1 since same file and natural cohesion
+- [07-04]: PredictionInput struct to avoid clippy too-many-arguments (8 params -> struct)
+- [07-04]: Inverse-error softmax for adaptive weights with min floor 0.05
+- [07-04]: Historical matcher flat Vec with 96 slots/edge (24h * 4 day_types) for O(1) lookup
+- [07-04]: Confidence = 1 - (range/mean) normalized inter-model disagreement
 
 ### Pending Todos
 
@@ -109,6 +113,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-07T16:06:00Z
-Stopped at: Completed 07-02-PLAN.md
-Resume file: .planning/phases/07-intelligence-routing-prediction/07-03-PLAN.md
+Last session: 2026-03-07T16:06:45Z
+Stopped at: Completed 07-04-PLAN.md
+Resume file: .planning/phases/07-intelligence-routing-prediction/07-05-PLAN.md

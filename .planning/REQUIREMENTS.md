@@ -55,10 +55,10 @@ Prove VELOS can replace SUMO: reimplement all core SUMO features, add agent inte
 - [x] **RTE-01**: CCH (Customizable Contraction Hierarchies) replaces A* for pathfinding on 25K-edge network
 - [ ] **RTE-02**: CCH supports 3ms dynamic weight customization without full re-contraction
 - [ ] **RTE-03**: Dynamic agent rerouting at 500 reroutes/step using CCH queries (0.02ms/query)
-- [ ] **RTE-04**: BPR + ETS + historical prediction ensemble runs in-process every 60 sim-seconds
-- [ ] **RTE-05**: Prediction overlay uses ArcSwap for zero-copy, lock-free weight updates to CCH
-- [ ] **RTE-06**: Global network knowledge routing -- real-time congestion map (edge travel times) feeds into pathfinding cost function
-- [ ] **RTE-07**: Prediction-informed routing -- cost function uses predicted future travel times, not just current observed
+- [x] **RTE-04**: BPR + ETS + historical prediction ensemble runs in-process every 60 sim-seconds
+- [x] **RTE-05**: Prediction overlay uses ArcSwap for zero-copy, lock-free weight updates to CCH
+- [x] **RTE-06**: Global network knowledge routing -- real-time congestion map (edge travel times) feeds into pathfinding cost function
+- [x] **RTE-07**: Prediction-informed routing -- cost function uses predicted future travel times, not just current observed
 
 ### Signal Control & V2I
 
@@ -159,10 +159,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | RTE-01 | Phase 7 | Complete |
 | RTE-02 | Phase 7 | Pending |
 | RTE-03 | Phase 7 | Pending |
-| RTE-04 | Phase 7 | Pending |
-| RTE-05 | Phase 7 | Pending |
-| RTE-06 | Phase 7 | Pending |
-| RTE-07 | Phase 7 | Pending |
+| RTE-04 | Phase 7 | Complete |
+| RTE-05 | Phase 7 | Complete |
+| RTE-06 | Phase 7 | Complete |
+| RTE-07 | Phase 7 | Complete |
 
 **Coverage:**
 - v1.1 requirements: 39 total
