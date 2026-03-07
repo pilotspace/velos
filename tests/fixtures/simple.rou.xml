@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<routes xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:noNamespaceSchemaLocation="http://sumo.dlr.de/xsd/routes_file.xsd">
+
+    <!-- Vehicle types -->
+    <vType id="car_krauss" accel="2.6" decel="4.5" sigma="0.5" length="5.0" minGap="2.5"
+           maxSpeed="33.33" guiShape="passenger" color="1,1,0"/>
+
+    <vType id="car_idm" accel="1.5" decel="3.0" sigma="0.3" length="4.5" minGap="2.0"
+           maxSpeed="30.0" carFollowModel="IDM" tau="1.2"/>
+
+    <!-- Vehicle type distribution -->
+    <vTypeDistribution id="mixed_cars">
+        <vType id="dist_krauss" accel="2.6" decel="4.5" sigma="0.5" length="5.0"
+               minGap="2.5" maxSpeed="33.33" probability="0.7"/>
+        <vType id="dist_idm" accel="1.5" decel="3.0" length="4.5" minGap="2.0"
+               maxSpeed="30.0" carFollowModel="IDM" probability="0.3"/>
+    </vTypeDistribution>
+
+    <!-- Vehicles with explicit routes -->
+    <vehicle id="veh_0" type="car_krauss" depart="0.0" departLane="best">
+        <route edges="e0 e1"/>
+    </vehicle>
+
+    <vehicle id="veh_1" type="car_idm" depart="10.0">
+        <route edges="e0 e1 e3"/>
+    </vehicle>
+
+    <vehicle id="veh_2" type="car_krauss" depart="20.0">
+        <route edges="e2 e3"/>
+    </vehicle>
+
+    <!-- Trips (from/to only, routing needed externally) -->
+    <trip id="trip_0" type="car_krauss" depart="5.0" from="e0" to="e3" via="e1"/>
+    <trip id="trip_1" type="car_idm" depart="15.0" from="e2" to="e0"/>
+
+    <!-- Flow (generates 100 vehicles between t=0 and t=3600) -->
+    <flow id="flow_0" type="car_krauss" begin="0" end="3600" number="100" from="e0" to="e3"/>
+
+    <!-- Person with walk stage -->
+    <person id="ped_0" depart="30.0" color="0,1,0">
+        <walk from="e0" to="e2"/>
+    </person>
+
+    <!-- Calibrator reference (best-effort) -->
+    <calibrator id="cal_0" edge="e0" pos="50.0" output="calibrator_output.xml" freq="900"/>
+
+</routes>

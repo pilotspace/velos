@@ -11,6 +11,7 @@ pub mod osm_import;
 pub mod projection;
 pub mod routing;
 pub mod spatial;
+pub mod sumo_demand;
 #[allow(dead_code, clippy::collapsible_if)]
 pub mod sumo_import;
 
