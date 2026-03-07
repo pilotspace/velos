@@ -42,7 +42,7 @@ Plans:
 - [x] 05-03-PLAN.md -- SUMO .net.xml and .rou.xml file import compatibility
 - [x] 05-04-PLAN.md -- GPU wave-front dispatch + physics cutover (IDM+Krauss shader)
 - [x] 05-05-PLAN.md -- Multi-GPU partitioning + boundary protocol + 280K benchmark
-- [ ] 05-06-PLAN.md -- Gap closure: wire CarFollowingModel into agent spawning + verify GPU behavior differentiation
+- [x] 05-06-PLAN.md -- Gap closure: wire CarFollowingModel into agent spawning + verify GPU behavior differentiation
 
 ### Phase 6: Agent Models & Signal Control
 **Goal**: Every vehicle and pedestrian type operates at GPU scale with realistic behavior, signals respond to traffic demand, and agents interact with V2I infrastructure
@@ -56,7 +56,7 @@ Plans:
   5. Peripheral network zones run mesoscopic queue model (O(1) per edge) while core zones remain microscopic, with agents transitioning smoothly through 100m buffer zones without speed discontinuities
 **Plans:** 7 plans
 Plans:
-- [ ] 06-01-PLAN.md -- GpuAgentState expansion (32->40 bytes) + VehicleType extension + new agent type params
+- [x] 06-01-PLAN.md -- GpuAgentState expansion (32->40 bytes) + VehicleType extension + new agent type params
 - [ ] 06-02-PLAN.md -- Bus agents with dwell model + GTFS import for HCMC bus routes
 - [ ] 06-03-PLAN.md -- Actuated + adaptive signal controllers with loop detectors
 - [ ] 06-04-PLAN.md -- Emergency vehicle yield behavior + GPU shader branching
@@ -87,6 +87,6 @@ Phases 5 through 7 execute sequentially. Each phase depends on the prior phase.
 | 2. Road Network & Vehicle Models + egui | v1.0 | 4/4 | Complete | 2026-03-07 |
 | 3. Motorbike Sublane & Pedestrians | v1.0 | 2/2 | Complete | 2026-03-07 |
 | 4. MOBIL Wiring + Motorbike Jam Fix + Performance | v1.0 | 3/3 | Complete | 2026-03-07 |
-| 5. Foundation & GPU Engine | v1.1 | 5/6 | Gap closure | - |
-| 6. Agent Models & Signal Control | v1.1 | 0/7 | Planned | - |
+| 5. Foundation & GPU Engine | v1.1 | 6/6 | Complete | 2026-03-07 |
+| 6. Agent Models & Signal Control | v1.1 | 1/7 | In progress | - |
 | 7. Intelligence, Routing & Prediction | v1.1 | 0/0 | Not started | - |

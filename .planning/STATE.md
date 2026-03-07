@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: SUMO Replacement Engine
-status: completed
-stopped_at: Phase 6 context gathered
-last_updated: "2026-03-07T13:56:08.550Z"
-last_activity: 2026-03-07 -- Completed Plan 05-06 (CarFollowingModel spawn wiring gap closure)
+status: in-progress
+stopped_at: Completed 06-01-PLAN.md
+last_updated: "2026-03-07T14:27:00.000Z"
+last_activity: 2026-03-07 -- Completed Plan 06-01 (Buffer layout and vehicle types)
 progress:
   total_phases: 3
   completed_phases: 1
-  total_plans: 6
-  completed_plans: 6
-  percent: 33
+  total_plans: 7
+  completed_plans: 7
+  percent: 38
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-07)
 
 **Core value:** Motorbikes move realistically through traffic using continuous sublane positioning -- not forced into discrete lanes like Western traffic models
-**Current focus:** Phase 5 -- Foundation & GPU Engine
+**Current focus:** Phase 6 -- Agent Models & Signal Control
 
 ## Current Position
 
-Phase: 5 of 7 (Foundation & GPU Engine) -- COMPLETE
-Plan: 06 of 06 complete -- Phase 5 finished (incl. gap closure)
-Status: Phase 5 complete, ready for Phase 6
-Last activity: 2026-03-07 -- Completed Plan 05-06 (CarFollowingModel spawn wiring gap closure)
+Phase: 6 of 7 (Agent Models & Signal Control) -- IN PROGRESS
+Plan: 01 complete -- Buffer layout and vehicle types
+Status: Plan 06-01 complete, ready for Plan 06-02
+Last activity: 2026-03-07 -- Completed Plan 06-01 (Buffer layout and vehicle types)
 
-Progress: [███-------] 33%
+Progress: [████------] 38%
 
 ## Accumulated Context
 
@@ -60,6 +60,10 @@ Recent decisions affecting current work:
 - [05-05]: PartitionMode enum (Single/Multi) preserves backward compatibility on SimWorld
 - [05-06]: RNG-based 30/70 Krauss/IDM assignment for cars; demand-config-driven assignment deferred to Phase 6
 - [05-06]: Motorbikes always IDM (sublane model is IDM-based); pedestrians excluded from CarFollowingModel
+- [06-01]: GpuAgentState expanded to 40 bytes with vehicle_type (u32) and flags (u32) fields
+- [06-01]: VehicleType extended to 7 variants: Motorbike, Car, Bus, Bicycle, Truck, Emergency, Pedestrian
+- [06-01]: Bicycle uses sublane model (like Motorbike); Bus/Truck/Emergency use lane-based (like Car)
+- [06-01]: VehicleType enum order = GPU u32 mapping (0=Motorbike..6=Pedestrian)
 
 ### Pending Todos
 
@@ -74,6 +78,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-07T13:56:08.548Z
-Stopped at: Phase 6 context gathered
-Resume file: .planning/phases/06-agent-models-signal-control/06-CONTEXT.md
+Last session: 2026-03-07T14:27:00.000Z
+Stopped at: Completed 06-01-PLAN.md
+Resume file: .planning/phases/06-agent-models-signal-control/06-01-SUMMARY.md

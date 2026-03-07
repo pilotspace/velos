@@ -35,11 +35,11 @@ Prove VELOS can replace SUMO: reimplement all core SUMO features, add agent inte
 
 - [ ] **AGT-01**: Bus agents with empirical dwell time model (5s + 0.5s/boarding + 0.67s/alighting, cap 60s)
 - [ ] **AGT-02**: GTFS import for 130 HCMC bus routes with stop locations and schedules
-- [ ] **AGT-03**: Bicycle agents with sublane model (rightmost position, IDM v0=15km/h)
+- [x] **AGT-03**: Bicycle agents with sublane model (rightmost position, IDM v0=15km/h)
 - [ ] **AGT-04**: Pedestrian adaptive GPU workgroups with prefix-sum compaction (3-8x speedup)
 - [ ] **AGT-05**: Meso-micro hybrid with 100m graduated buffer zone and velocity-matching insertion
 - [ ] **AGT-06**: Mesoscopic queue model (O(1) per edge) for peripheral network zones
-- [ ] **AGT-07**: Truck agent type with distinct dynamics (12m length, 1.0 m/s2 accel, 90 km/h max)
+- [x] **AGT-07**: Truck agent type with distinct dynamics (12m length, 1.0 m/s2 accel, 90 km/h max)
 - [ ] **AGT-08**: Emergency vehicle with priority behavior and yield-to-emergency from other agents
 
 ### Agent Intelligence
@@ -140,11 +140,11 @@ Which phases cover which requirements. Updated during roadmap creation.
 | CFM-02 | Phase 5 | Complete (05-01) |
 | AGT-01 | Phase 6 | Pending |
 | AGT-02 | Phase 6 | Pending |
-| AGT-03 | Phase 6 | Pending |
+| AGT-03 | Phase 6 | Complete (06-01) |
 | AGT-04 | Phase 6 | Pending |
 | AGT-05 | Phase 6 | Pending |
 | AGT-06 | Phase 6 | Pending |
-| AGT-07 | Phase 6 | Pending |
+| AGT-07 | Phase 6 | Complete (06-01) |
 | AGT-08 | Phase 6 | Pending |
 | SIG-01 | Phase 6 | Pending |
 | SIG-02 | Phase 6 | Pending |
