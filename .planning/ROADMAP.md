@@ -148,7 +148,7 @@ Plans:
   3. intersection_gap_acceptance() reads actual leader_speed and wait_time from perception buffer
   4. upload_emergency_vehicles() is called every frame in tick_gpu() — emergency_count > 0 when emergency vehicles exist
   5. GPU yield cone activates for agents near emergency vehicles (not early-exiting due to zero count)
-**Plans:** 2 plans
+**Plans:** 1/2 plans executed
 Plans:
 - [ ] 11-01-PLAN.md -- Perception buffer wiring: shared result buffer for binding(8)
 - [ ] 11-02-PLAN.md -- Emergency vehicle upload + FLAG_EMERGENCY_ACTIVE in step_vehicles_gpu
@@ -170,4 +170,4 @@ Phases 5 through 8 execute sequentially. Each phase depends on the prior phase.
 | 8. Tuning Vehicle Behavior (HCM) | v1.1 | 3/3 | Complete | 2026-03-08 |
 | 9. Sim Loop Integration — Startup & Frame Pipeline | 2/3 | In Progress|  | - |
 | 10. Sim Loop Integration — Bus Dwell & Meso-Micro | 2/2 | Complete    | 2026-03-08 | - |
-| 11. GPU Buffer Wiring — Perception & Emergency | v1.1 | 0/2 | Planned | - |
+| 11. GPU Buffer Wiring — Perception & Emergency | 1/2 | In Progress|  | - |

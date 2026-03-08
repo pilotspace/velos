@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: SUMO Replacement Engine
-status: in_progress
-stopped_at: Completed 10-02-PLAN.md
-last_updated: "2026-03-08T07:36:32Z"
-last_activity: 2026-03-08 -- Completed Plan 10-02 (meso-micro zone integration)
+status: executing
+stopped_at: Completed 11-01-PLAN.md
+last_updated: "2026-03-08T08:04:59.587Z"
+last_activity: 2026-03-08 -- Completed Plan 11-01 (perception buffer wiring)
 progress:
   total_phases: 7
   completed_phases: 6
-  total_plans: 27
-  completed_plans: 27
-  percent: 96
+  total_plans: 29
+  completed_plans: 28
+  percent: 97
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-07)
 
 **Core value:** Motorbikes move realistically through traffic using continuous sublane positioning -- not forced into discrete lanes like Western traffic models
-**Current focus:** Phase 10 -- Sim Loop Integration: Bus Dwell & Meso-Micro
+**Current focus:** Phase 11 -- GPU Buffer Wiring: Perception & Emergency
 
 ## Current Position
 
-Phase: 10 of 11 (Sim Loop Integration: Bus Dwell & Meso-Micro)
-Plan: 02 of 02 complete -- 02 (meso-micro zone integration)
-Status: Phase 10 complete
-Last activity: 2026-03-08 -- Completed Plan 10-02 (meso-micro zone integration)
+Phase: 11 of 11 (GPU Buffer Wiring: Perception & Emergency)
+Plan: 01 of 02 complete -- 01 (perception buffer wiring)
+Status: Phase 11 in progress
+Last activity: 2026-03-08 -- Completed Plan 11-01 (perception buffer wiring)
 
-Progress: [██████████] 96%
+Progress: [██████████] 97%
 
 ## Accumulated Context
 
@@ -141,6 +141,7 @@ Recent decisions affecting current work:
 - [10-02]: MesoAgentState preserves Route, VehicleType, IdmParams, CarFollowingModel, LateralOffset across zone transitions
 - [10-02]: Gap check 10m threshold prevents micro edge insertion when congested; blocked vehicles re-enqueue
 - [10-02]: step_meso() runs BEFORE step_vehicles_gpu (meso agents ready for buffer zone insertion before micro physics)
+- [Phase 11]: [11-01]: ComputeDispatcher owns shared perception buffer; PerceptionPipeline receives references via PerceptionBindings and readback_results parameter
 
 ### Pending Todos
 
@@ -159,6 +160,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-08T07:36:32Z
-Stopped at: Completed 10-02-PLAN.md
-Resume file: Phase 10 complete
+Last session: 2026-03-08T08:04:59.585Z
+Stopped at: Completed 11-01-PLAN.md
+Resume file: None
