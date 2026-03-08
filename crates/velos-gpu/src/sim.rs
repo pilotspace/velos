@@ -24,10 +24,14 @@ use velos_net::{RoadGraph, SpatialIndex};
 use velos_signal::detector::{DetectorReading, LoopDetector};
 use velos_signal::priority::{PriorityLevel, PriorityRequest};
 use velos_signal::SignalController;
+use velos_meso::queue_model::SpatialQueue;
+use velos_meso::zone_config::ZoneConfig;
 use velos_vehicle::bus::{BusDwellModel, BusStop};
 use velos_vehicle::config::VehicleConfig;
 use velos_vehicle::social_force::SocialForceParams;
 use velos_vehicle::sublane::SublaneParams;
+
+use crate::sim_meso::MesoAgentState;
 
 use crate::compute::{sort_agents_by_lane, ComputeDispatcher};
 use crate::multi_gpu::MultiGpuScheduler;
@@ -134,6 +138,14 @@ pub struct SimWorld {
     pub bus_stops: Vec<BusStop>,
     /// Empirical bus dwell time model parameters.
     pub(crate) bus_dwell_model: BusDwellModel,
+    /// Whether mesoscopic zone simulation is enabled (default false).
+    pub(crate) meso_enabled: bool,
+    /// Zone configuration: maps edge IDs to Micro/Meso/Buffer zones.
+    pub(crate) zone_config: ZoneConfig,
+    /// Active SpatialQueues for meso-designated edges (keyed by edge ID).
+    pub(crate) meso_queues: HashMap<u32, SpatialQueue>,
+    /// Preserved agent state during meso transit (keyed by vehicle ID).
+    pub(crate) meso_agent_states: HashMap<u32, MesoAgentState>,
 }
 
 impl SimWorld {
@@ -207,6 +219,10 @@ impl SimWorld {
             perception_buffers: Some(perception_buffers),
             bus_stops: Vec::new(),
             bus_dwell_model: BusDwellModel::default(),
+            meso_enabled: false,
+            zone_config: sim_startup::load_zone_config(),
+            meso_queues: HashMap::new(),
+            meso_agent_states: HashMap::new(),
         };
 
         // Initialize reroute subsystem (builds CCH, prediction service).
@@ -258,6 +274,10 @@ impl SimWorld {
             perception_buffers: None,
             bus_stops: Vec::new(),
             bus_dwell_model: BusDwellModel::default(),
+            meso_enabled: false,
+            zone_config: sim_startup::load_zone_config(),
+            meso_queues: HashMap::new(),
+            meso_agent_states: HashMap::new(),
         }
     }
 

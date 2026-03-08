@@ -20,6 +20,7 @@ mod sim_mobil;
 mod sim_lifecycle;
 mod sim_render;
 mod sim_bus;
+mod sim_meso;
 mod sim_pedestrians;
 mod sim_perception;
 mod sim_reroute;

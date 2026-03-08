@@ -222,6 +222,34 @@ pub(crate) fn upload_network_signs(
     }
 }
 
+/// Load zone configuration from TOML with env override.
+///
+/// Falls back to `ZoneConfig::new()` (all edges Micro) on error with a warning log.
+/// This follows the same graceful degradation pattern as `load_vehicle_config()`.
+pub(crate) fn load_zone_config() -> velos_meso::zone_config::ZoneConfig {
+    let path = std::env::var("VELOS_ZONE_CONFIG")
+        .unwrap_or_else(|_| "data/hcmc/zone_config.toml".to_string());
+
+    match velos_meso::zone_config::ZoneConfig::load_from_toml(std::path::Path::new(&path)) {
+        Ok(config) => {
+            log::info!(
+                "Loaded zone config from '{}' ({} zone assignments)",
+                path,
+                config.len()
+            );
+            config
+        }
+        Err(e) => {
+            log::warn!(
+                "Failed to load zone config from '{}': {}. All edges default to Micro.",
+                path,
+                e
+            );
+            velos_meso::zone_config::ZoneConfig::new()
+        }
+    }
+}
+
 /// Upload vehicle parameters to the GPU uniform buffer at binding 7.
 pub(crate) fn upload_vehicle_params(
     vehicle_config: &VehicleConfig,
@@ -342,5 +370,19 @@ mod tests {
         // Should succeed with either real file or default
         assert!(config.motorbike.v0 > 0.0);
         assert!(config.car.v0 > 0.0);
+    }
+
+    #[test]
+    fn load_zone_config_missing_file_defaults_to_micro() {
+        // No zone_config.toml exists in test environment, so should get all-Micro default.
+        let config = load_zone_config();
+        assert_eq!(
+            config.zone_type(42),
+            velos_meso::zone_config::ZoneType::Micro
+        );
+        assert_eq!(
+            config.zone_type(999),
+            velos_meso::zone_config::ZoneType::Micro
+        );
     }
 }
