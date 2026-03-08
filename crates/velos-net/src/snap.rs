@@ -13,7 +13,9 @@ use crate::projection::EquirectangularProjection;
 use velos_demand::gtfs::GtfsStop;
 
 /// Maximum snap distance in metres. Stops beyond this radius are skipped.
-const MAX_SNAP_RADIUS_M: f64 = 50.0;
+/// HCMC OSM coverage is sparse in some areas; 200m accommodates stops
+/// on minor roads not present in the District 1 PBF extract.
+const MAX_SNAP_RADIUS_M: f64 = 200.0;
 
 /// Merge threshold: duplicate stops on the same edge within this distance are merged.
 const MERGE_THRESHOLD_M: f64 = 10.0;
@@ -159,8 +161,8 @@ pub fn snap_to_nearest_edge(
 ///
 /// 1. Builds an R-tree from the road graph edges.
 /// 2. Projects each `GtfsStop` lat/lon to local metres via the projection.
-/// 3. Snaps to the nearest edge within 50m.
-/// 4. Skips stops beyond 50m with a logged warning.
+/// 3. Snaps to the nearest edge within `MAX_SNAP_RADIUS_M`.
+/// 4. Skips stops beyond the radius with a logged warning.
 /// 5. Merges duplicate stops on the same edge within 10m.
 ///
 /// Returns `Vec<BusStop>` with default `capacity: 40`.
@@ -191,11 +193,12 @@ pub fn snap_gtfs_stops(
             }
             None => {
                 log::warn!(
-                    "GTFS stop '{}' (id={}) at ({:.6}, {:.6}) is >50m from any edge, skipping",
+                    "GTFS stop '{}' (id={}) at ({:.6}, {:.6}) is >{}m from any edge, skipping",
                     stop.name,
                     stop.stop_id,
                     stop.lat,
-                    stop.lon
+                    stop.lon,
+                    MAX_SNAP_RADIUS_M as u32
                 );
             }
         }
@@ -325,9 +328,9 @@ mod tests {
         let graph = make_graph(vec![(0, 1, vec![[0.0, 0.0], [100.0, 0.0]])]);
         let tree = build_edge_rtree(&graph);
 
-        // Point 60m north -- beyond 50m radius
+        // Point 60m north -- beyond the 50m radius passed to this call
         let result = snap_to_nearest_edge(&tree, [50.0, 60.0], 50.0);
-        assert!(result.is_none(), "should return None for >50m");
+        assert!(result.is_none(), "should return None for distance > max_radius");
     }
 
     #[test]
@@ -384,8 +387,8 @@ mod tests {
         let graph = make_graph(vec![(0, 1, vec![[0.0, 0.0], [100.0, 0.0]])]);
         let proj = EquirectangularProjection::new(10.7756, 106.7019);
 
-        // Stop 200m north -- way beyond 50m
-        let stop_lat = 10.7756 + 200.0 / 110_540.0;
+        // Stop 500m north -- way beyond 200m snap radius
+        let stop_lat = 10.7756 + 500.0 / 110_540.0;
         let stops = vec![GtfsStop {
             stop_id: "S_FAR".to_string(),
             name: "Far Stop".to_string(),

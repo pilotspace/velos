@@ -83,16 +83,19 @@ pub struct BusState {
     dwell_remaining: f64,
     /// Whether the bus is currently dwelling at a stop.
     is_dwelling: bool,
+    /// Route index for color-coding in the visualization (0–255).
+    route_index: u8,
 }
 
 impl BusState {
-    /// Create a new bus state for a route with the given stop indices.
-    pub fn new(stop_indices: Vec<usize>) -> Self {
+    /// Create a new bus state for a route with the given stop indices and route index.
+    pub fn new(stop_indices: Vec<usize>, route_index: u8) -> Self {
         Self {
             stop_indices,
             current_stop_index: 0,
             dwell_remaining: 0.0,
             is_dwelling: false,
+            route_index,
         }
     }
 
@@ -165,5 +168,10 @@ impl BusState {
     /// Whether all stops have been visited.
     pub fn route_complete(&self) -> bool {
         self.current_stop_index >= self.stop_indices.len()
+    }
+
+    /// Route index for per-route color-coding (0–255).
+    pub fn route_index(&self) -> u8 {
+        self.route_index
     }
 }

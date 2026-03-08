@@ -5,9 +5,22 @@ use petgraph::Direction;
 
 use velos_core::components::{CarFollowingModel, Kinematics, Position, VehicleType, WaitState};
 use velos_signal::plan::PhaseState;
+use velos_vehicle::bus::BusState;
 
 use crate::renderer::AgentInstance;
 use crate::sim::SimWorld;
+
+/// Distinct colors for up to 8 bus routes, then wraps.
+const BUS_ROUTE_COLORS: [[f32; 4]; 8] = [
+    [1.0, 0.84, 0.0, 1.0],   // gold
+    [0.0, 0.75, 0.4, 1.0],   // emerald
+    [0.85, 0.2, 0.2, 1.0],   // crimson
+    [0.2, 0.6, 1.0, 1.0],    // dodger blue
+    [0.93, 0.5, 0.0, 1.0],   // tangerine
+    [0.6, 0.2, 0.8, 1.0],    // purple
+    [0.0, 0.8, 0.8, 1.0],    // teal
+    [0.9, 0.4, 0.6, 1.0],    // rose
+];
 
 impl SimWorld {
     /// Build per-type instance arrays for rendering.
@@ -18,7 +31,7 @@ impl SimWorld {
         let mut cars = Vec::new();
         let mut pedestrians = Vec::new();
 
-        for (pos, kin, vtype, ws, cf_model) in self
+        for (pos, kin, vtype, ws, cf_model, bus_state) in self
             .world
             .query::<(
                 &Position,
@@ -26,6 +39,7 @@ impl SimWorld {
                 &VehicleType,
                 Option<&WaitState>,
                 Option<&CarFollowingModel>,
+                Option<&BusState>,
             )>()
             .iter()
         {
@@ -56,7 +70,10 @@ impl SimWorld {
                         [0.2, 0.4, 0.9, 1.0] // blue: IDM car
                     }
                 }
-                VehicleType::Bus => [0.9, 0.9, 0.0, 1.0],        // yellow
+                VehicleType::Bus => {
+                    let ri = bus_state.map(|bs| bs.route_index()).unwrap_or(0);
+                    BUS_ROUTE_COLORS[ri as usize % BUS_ROUTE_COLORS.len()]
+                }
                 VehicleType::Bicycle => [0.0, 0.9, 0.9, 1.0],     // cyan
                 VehicleType::Truck => [0.6, 0.4, 0.2, 1.0],       // brown
                 VehicleType::Emergency => [1.0, 0.0, 0.0, 1.0],   // red

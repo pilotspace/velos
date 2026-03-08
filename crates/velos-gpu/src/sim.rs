@@ -155,6 +155,10 @@ pub struct SimWorld {
     pub(crate) signal_dirty: bool,
     /// True when prediction overlay was swapped since last GPU upload.
     pub(crate) prediction_dirty: bool,
+    /// Counter for assigning route indices to OD-spawned buses (wraps at 255).
+    pub(crate) next_bus_route_index: u8,
+    /// Map from GTFS route_id to assigned route_index for consistent coloring.
+    pub(crate) gtfs_route_indices: HashMap<String, u8>,
 }
 
 impl SimWorld {
@@ -255,6 +259,8 @@ impl SimWorld {
             ped_adaptive: Some(ped_adaptive),
             signal_dirty: true,
             prediction_dirty: true,
+            next_bus_route_index: 0,
+            gtfs_route_indices: HashMap::new(),
         };
 
         // Initialize reroute subsystem (builds CCH, prediction service).
@@ -321,6 +327,8 @@ impl SimWorld {
             ped_adaptive: None,
             signal_dirty: true,
             prediction_dirty: true,
+            next_bus_route_index: 0,
+            gtfs_route_indices: HashMap::new(),
         }
     }
 

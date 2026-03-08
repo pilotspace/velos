@@ -71,7 +71,7 @@ fn should_stop_within_threshold() {
             name: "Stop B".to_string(),
         },
     ];
-    let state = BusState::new(vec![0, 1]);
+    let state = BusState::new(vec![0, 1], 0);
     // On same edge, within 5m
     assert!(state.should_stop(1, 97.0, &stops));
     assert!(state.should_stop(1, 103.0, &stops));
@@ -85,7 +85,7 @@ fn should_stop_outside_threshold() {
         capacity: 20,
         name: "Stop A".to_string(),
     }];
-    let state = BusState::new(vec![0]);
+    let state = BusState::new(vec![0], 0);
     // Outside 5m
     assert!(!state.should_stop(1, 90.0, &stops));
     // Wrong edge
@@ -100,7 +100,7 @@ fn should_stop_returns_false_when_all_stops_visited() {
         capacity: 20,
         name: "Stop A".to_string(),
     }];
-    let mut state = BusState::new(vec![0]);
+    let mut state = BusState::new(vec![0], 0);
     let model = BusDwellModel::default();
     state.begin_dwell(&model, 5, 3);
     // Tick until done
@@ -112,7 +112,7 @@ fn should_stop_returns_false_when_all_stops_visited() {
 #[test]
 fn begin_dwell_sets_state() {
     let model = BusDwellModel::default();
-    let mut state = BusState::new(vec![0]);
+    let mut state = BusState::new(vec![0], 0);
     state.begin_dwell(&model, 10, 5);
     assert!(state.is_dwelling());
     assert!((state.dwell_remaining() - 13.35).abs() < 1e-9);
@@ -121,7 +121,7 @@ fn begin_dwell_sets_state() {
 #[test]
 fn tick_dwell_decrements_and_completes() {
     let model = BusDwellModel::default();
-    let mut state = BusState::new(vec![0]);
+    let mut state = BusState::new(vec![0], 0);
     state.begin_dwell(&model, 0, 0); // 5.0s dwell
 
     // Tick 3s -- not done yet
@@ -151,7 +151,7 @@ fn tick_dwell_advances_stop_index() {
             name: "Stop B".to_string(),
         },
     ];
-    let mut state = BusState::new(vec![0, 1]);
+    let mut state = BusState::new(vec![0, 1], 0);
 
     // Dwell at first stop
     state.begin_dwell(&model, 0, 0);
@@ -160,4 +160,22 @@ fn tick_dwell_advances_stop_index() {
     // Now should target second stop
     assert!(state.should_stop(2, 200.0, &stops));
     assert!(!state.should_stop(1, 100.0, &stops)); // first stop already visited
+}
+
+#[test]
+fn route_index_stored_and_accessible() {
+    let state = BusState::new(vec![0, 1], 5);
+    assert_eq!(state.route_index(), 5);
+}
+
+#[test]
+fn route_index_zero_default() {
+    let state = BusState::new(vec![0], 0);
+    assert_eq!(state.route_index(), 0);
+}
+
+#[test]
+fn route_index_max_value() {
+    let state = BusState::new(vec![], 255);
+    assert_eq!(state.route_index(), 255);
 }

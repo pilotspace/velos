@@ -76,7 +76,7 @@ fn spawn_test_bus(
             lateral_offset: 1.75,
             desired_lateral: 1.75,
         },
-        BusState::new(stop_indices),
+        BusState::new(stop_indices, 0),
     ))
 }
 

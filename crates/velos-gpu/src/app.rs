@@ -260,6 +260,36 @@ impl GpuState {
                             ui.label(format!("{name}: {count}"));
                         });
                     }
+
+                    // Bus line color legend (per-route breakdown).
+                    if m.bus_count > 0 {
+                        ui.separator();
+                        ui.heading("Bus Lines");
+                        let bus_colors: &[(&str, [u8; 3])] = &[
+                            ("Line 0", [255, 214, 0]),    // gold
+                            ("Line 1", [0, 191, 102]),    // emerald
+                            ("Line 2", [217, 51, 51]),    // crimson
+                            ("Line 3", [51, 153, 255]),   // dodger blue
+                            ("Line 4", [237, 128, 0]),    // tangerine
+                            ("Line 5", [153, 51, 204]),   // purple
+                            ("Line 6", [0, 204, 204]),    // teal
+                            ("Line 7", [230, 102, 153]),  // rose
+                        ];
+                        for &(name, [r, g, b]) in bus_colors {
+                            ui.horizontal(|ui| {
+                                let (rect, _) = ui.allocate_exact_size(
+                                    egui::vec2(12.0, 12.0),
+                                    egui::Sense::hover(),
+                                );
+                                ui.painter().rect_filled(
+                                    rect,
+                                    2.0,
+                                    egui::Color32::from_rgb(r, g, b),
+                                );
+                                ui.label(name);
+                            });
+                        }
+                    }
                 });
         });
 

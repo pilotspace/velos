@@ -116,6 +116,7 @@ impl SimWorld {
             CarFollowingModel::Idm
         };
 
+        let route_idx = self.gtfs_route_index(&req.route_id);
         self.world.spawn((
             Position { x: spawn_x, y: spawn_y },
             Kinematics {
@@ -144,7 +145,7 @@ impl SimWorld {
                 lateral_offset: initial_lateral,
                 desired_lateral: initial_lateral,
             },
-            BusState::new(req.stop_indices.clone()),
+            BusState::new(req.stop_indices.clone(), route_idx),
             AgentProfile::Bus,
         ));
 
@@ -318,6 +319,7 @@ impl SimWorld {
             let initial_lateral = (0.0 + 0.5) * 3.5; // lane 0 center = 1.75m
 
             if vtype == VehicleType::Bus {
+                let route_idx = self.next_od_bus_route_index();
                 self.world.spawn((
                     base_components.0,
                     base_components.1,
@@ -331,7 +333,7 @@ impl SimWorld {
                         lateral_offset: initial_lateral,
                         desired_lateral: initial_lateral,
                     },
-                    BusState::new(bus_stop_indices),
+                    BusState::new(bus_stop_indices, route_idx),
                     req.profile,
                 ));
             } else {
@@ -364,6 +366,24 @@ impl SimWorld {
                 req.profile,
             ));
         }
+    }
+
+    /// Assign a stable route_index for a GTFS route_id (same route always gets same index).
+    fn gtfs_route_index(&mut self, route_id: &str) -> u8 {
+        if let Some(&idx) = self.gtfs_route_indices.get(route_id) {
+            return idx;
+        }
+        let idx = self.next_bus_route_index;
+        self.next_bus_route_index = self.next_bus_route_index.wrapping_add(1);
+        self.gtfs_route_indices.insert(route_id.to_string(), idx);
+        idx
+    }
+
+    /// Assign the next route_index for OD-spawned buses (round-robin).
+    fn next_od_bus_route_index(&mut self) -> u8 {
+        let idx = self.next_bus_route_index;
+        self.next_bus_route_index = self.next_bus_route_index.wrapping_add(1);
+        idx
     }
 
     pub(crate) fn random_node_near(&mut self, pos: [f64; 2], radius: f64) -> NodeIndex {
