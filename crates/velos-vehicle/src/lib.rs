@@ -12,6 +12,7 @@ pub mod emergency;
 pub mod error;
 pub mod gridlock;
 pub mod idm;
+pub mod intersection;
 pub mod krauss;
 pub mod mobil;
 pub mod social_force;
