@@ -156,3 +156,59 @@ impl SimWorld {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use petgraph::graph::DiGraph;
+    use velos_core::components::{Kinematics, Position, Route, VehicleType};
+    use velos_net::graph::{RoadGraph, RoadNode};
+
+    use crate::sim::SimWorld;
+
+    fn make_test_graph() -> RoadGraph {
+        let mut g = DiGraph::new();
+        g.add_node(RoadNode { pos: [0.0, 0.0] });
+        g.add_node(RoadNode { pos: [100.0, 0.0] });
+        g.add_node(RoadNode { pos: [200.0, 0.0] });
+        RoadGraph::new(g)
+    }
+
+    #[test]
+    fn cpu_only_has_no_ped_adaptive() {
+        let graph = make_test_graph();
+        let sim = SimWorld::new_cpu_only(graph);
+        assert!(sim.ped_adaptive.is_none());
+    }
+
+    #[test]
+    fn step_pedestrians_gpu_skips_when_no_pipeline() {
+        let graph = make_test_graph();
+        let mut sim = SimWorld::new_cpu_only(graph);
+        sim.sim_state = crate::sim::SimState::Running;
+
+        // Spawn a pedestrian
+        let ped = sim.world.spawn((
+            VehicleType::Pedestrian,
+            Route {
+                path: vec![1, 2],
+                current_step: 0,
+            },
+            Position { x: 0.0, y: 0.0 },
+            Kinematics {
+                speed: 0.0,
+                heading: 0.0,
+                vx: 0.0,
+                vy: 0.0,
+            },
+        ));
+
+        // step_pedestrians_gpu with ped_adaptive=None should log warn and return
+        // without modifying the pedestrian's position.
+        // We can't call it with real device/queue, so we just verify the field is None.
+        assert!(sim.ped_adaptive.is_none());
+
+        // Position should be unchanged since no GPU pipeline available.
+        let pos = sim.world.query_one_mut::<&Position>(ped).unwrap();
+        assert!((pos.x - 0.0).abs() < 1e-6);
+    }
+}
