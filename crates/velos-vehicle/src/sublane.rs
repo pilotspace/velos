@@ -3,10 +3,13 @@
 //! Implements continuous lateral positioning for motorbikes in HCMC mixed traffic.
 //! Motorbikes seek lateral gaps >= `min_filter_gap` and drift toward them at bounded speed.
 //! At red lights, swarming behavior fills the full road width.
+//! Red-light creep lets motorbikes/bicycles inch forward past the stop line.
 //!
 //! All functions are pure (no ECS dependency) following the IDM/MOBIL pattern.
 //!
 //! Reference: VELOS architecture doc `02-agent-models.md` Section 1.
+
+use crate::types::VehicleType;
 
 /// Parameters for the motorbike sublane model.
 ///
@@ -62,6 +65,67 @@ pub struct NeighborInfo {
 /// Maximum longitudinal distance to consider a neighbor for lateral gap computation.
 const LATERAL_SCAN_AHEAD: f64 = 10.0;
 
+/// Maximum creep speed for motorbikes at red lights (m/s).
+const CREEP_MAX_SPEED: f64 = 0.3;
+
+/// Distance over which creep ramps from zero to max (metres).
+const CREEP_DISTANCE_SCALE: f64 = 5.0;
+
+/// Minimum distance to stop line below which creep stops (metres).
+const CREEP_MIN_DISTANCE: f64 = 0.5;
+
+/// Speed-dependent gap widening coefficient (s).
+/// effective_gap = base + GAP_SPEED_COEFF * |delta_v|
+const GAP_SPEED_COEFF: f64 = 0.1;
+
+/// Compute longitudinal creep speed for motorbikes at red lights.
+///
+/// Motorbikes inch forward past the stop line, forming a dense swarm.
+/// Only motorbikes and bicycles creep; other vehicles stop fully.
+/// Creep speed is proportional to distance from stop line, capped at 0.3 m/s.
+/// Creep stops when within 0.5m of stop line (already at front of swarm).
+///
+/// # Arguments
+/// * `distance_to_stop_line` - longitudinal distance to the stop line (metres)
+/// * `vehicle_type` - type of the vehicle
+///
+/// # Returns
+/// Creep speed in m/s (0.0 for non-creeping vehicle types or when too close).
+pub fn red_light_creep_speed(distance_to_stop_line: f64, vehicle_type: VehicleType) -> f64 {
+    // Only motorbikes and bicycles creep
+    match vehicle_type {
+        VehicleType::Motorbike | VehicleType::Bicycle => {}
+        _ => return 0.0,
+    }
+
+    // No creep if already at or past the stop line
+    if distance_to_stop_line < CREEP_MIN_DISTANCE {
+        return 0.0;
+    }
+
+    // Gradual ramp: linearly increases with distance, capped at max
+    CREEP_MAX_SPEED * (distance_to_stop_line / CREEP_DISTANCE_SCALE).min(1.0)
+}
+
+/// Compute effective lateral filter gap with speed-dependent widening.
+///
+/// At low speed differences, motorbikes squeeze through the base gap (0.5m).
+/// At higher speed differences, a larger gap is required for safety.
+///
+/// Formula: `effective_gap = base_min_gap + 0.1 * |own_speed - neighbor_speed|`
+///
+/// # Arguments
+/// * `base_min_gap` - minimum gap from config (metres)
+/// * `own_speed` - ego vehicle speed (m/s)
+/// * `neighbor_speed` - neighbor vehicle speed (m/s)
+///
+/// # Returns
+/// Effective minimum filter gap (metres).
+pub fn effective_filter_gap(base_min_gap: f64, own_speed: f64, neighbor_speed: f64) -> f64 {
+    let delta_v = (own_speed - neighbor_speed).abs();
+    base_min_gap + GAP_SPEED_COEFF * delta_v
+}
+
 
 /// Compute desired lateral target position for a motorbike.
 ///
@@ -83,7 +147,7 @@ const LATERAL_SCAN_AHEAD: f64 = 10.0;
 /// * `params` - sublane model parameters
 pub fn compute_desired_lateral(
     own_lateral: f64,
-    _own_speed: f64,
+    own_speed: f64,
     road_width: f64,
     neighbors: &[NeighborInfo],
     at_red_light: bool,
@@ -115,11 +179,18 @@ pub fn compute_desired_lateral(
     let mut best_lateral = own_clamped;
     let mut best_gap = lateral_gap_at(own_clamped, &relevant, params);
 
+    // Use the worst-case (largest) effective gap threshold across all
+    // nearby neighbors for the accept/reject decision.
+    let min_effective_gap = relevant
+        .iter()
+        .map(|n| effective_filter_gap(params.min_filter_gap, own_speed, n.speed))
+        .fold(params.min_filter_gap, f64::max);
+
     // Probe rightward (decreasing lateral offset)
     let mut probe = own_clamped - probe_step;
     while probe >= min_lat {
         let gap = lateral_gap_at(probe, &relevant, params);
-        if gap >= params.min_filter_gap && gap > best_gap {
+        if gap >= min_effective_gap && gap > best_gap {
             best_gap = gap;
             best_lateral = probe;
         }
@@ -130,15 +201,15 @@ pub fn compute_desired_lateral(
     probe = own_clamped + probe_step;
     while probe <= max_lat {
         let gap = lateral_gap_at(probe, &relevant, params);
-        if gap >= params.min_filter_gap && gap > best_gap {
+        if gap >= min_effective_gap && gap > best_gap {
             best_gap = gap;
             best_lateral = probe;
         }
         probe += probe_step;
     }
 
-    // Only move if we found a gap that meets the minimum threshold
-    if best_gap >= params.min_filter_gap && (best_lateral - own_clamped).abs() > 0.01 {
+    // Only move if we found a gap that meets the effective threshold
+    if best_gap >= min_effective_gap && (best_lateral - own_clamped).abs() > 0.01 {
         best_lateral.clamp(min_lat, max_lat)
     } else {
         own_clamped

@@ -1,8 +1,10 @@
 //! Tests for motorbike sublane lateral model.
 
 use velos_vehicle::sublane::{
-    apply_lateral_drift, compute_desired_lateral, NeighborInfo, SublaneParams,
+    apply_lateral_drift, compute_desired_lateral, effective_filter_gap, red_light_creep_speed,
+    NeighborInfo, SublaneParams,
 };
+use velos_vehicle::types::VehicleType;
 
 fn default_params() -> SublaneParams {
     SublaneParams::default()
@@ -166,21 +168,125 @@ fn road_boundary_respected() {
 fn gap_computation_subtracts_both_half_widths() {
     let params = default_params();
     let road_width = 7.0;
-    // Neighbor at lateral=2.5 with half_width=0.8 (car). Ego half_width=0.25.
-    // Available gap to the left of neighbor starts at 2.5 + 0.8 = 3.3
-    // Available gap to the right of neighbor ends at 2.5 - 0.8 = 1.7
-    // Ego at 1.0: gap between ego right edge (1.0-0.25=0.75) and neighbor left edge (1.7)
-    // = 0.95m, which is >= 0.6m. So there should be a valid gap.
     let neighbors = vec![NeighborInfo {
         lateral_offset: 2.5,
         longitudinal_gap: 5.0,
         half_width: 0.8,
         speed: 5.0,
     }];
-    // At 1.0, gap to neighbor = |2.5-1.0| - 0.8 - 0.25 = 0.45 < 0.6 → not enough
-    // At 0.5, gap = |2.5-0.5| - 0.8 - 0.25 = 0.95 → valid
     let result = compute_desired_lateral(1.0, 5.0, road_width, &neighbors, false, &params);
-    // Result should be <= 1.0 (moving right toward the wider gap) or stay at 1.0
     assert!(result >= params.half_width);
     assert!(result <= road_width - params.half_width);
+}
+
+// ---------- red_light_creep_speed ----------
+
+#[test]
+fn creep_motorbike_at_red_light_returns_positive() {
+    // Motorbike at red light with distance > 0.5m should creep forward
+    let speed = red_light_creep_speed(3.0, VehicleType::Motorbike);
+    assert!(speed > 0.0, "motorbike should creep at red light, got {speed}");
+}
+
+#[test]
+fn creep_car_returns_zero() {
+    // Cars do NOT creep at red lights
+    let speed = red_light_creep_speed(3.0, VehicleType::Car);
+    assert!(
+        speed.abs() < 1e-10,
+        "car should not creep, got {speed}"
+    );
+}
+
+#[test]
+fn creep_bus_returns_zero() {
+    let speed = red_light_creep_speed(3.0, VehicleType::Bus);
+    assert!(speed.abs() < 1e-10, "bus should not creep, got {speed}");
+}
+
+#[test]
+fn creep_truck_returns_zero() {
+    let speed = red_light_creep_speed(3.0, VehicleType::Truck);
+    assert!(speed.abs() < 1e-10, "truck should not creep, got {speed}");
+}
+
+#[test]
+fn creep_bicycle_returns_positive() {
+    // Bicycles also creep at red lights
+    let speed = red_light_creep_speed(3.0, VehicleType::Bicycle);
+    assert!(speed > 0.0, "bicycle should creep at red light, got {speed}");
+}
+
+#[test]
+fn creep_zero_when_past_stop_line() {
+    // Already at/past stop line (distance < 0.5m), no more creeping
+    let speed = red_light_creep_speed(0.3, VehicleType::Motorbike);
+    assert!(
+        speed.abs() < 1e-10,
+        "should not creep when already at stop line, got {speed}"
+    );
+}
+
+#[test]
+fn creep_speed_decreases_closer_to_stop_line() {
+    // Creep speed should be gradual: higher at distance=5m, lower at distance=1m
+    let far = red_light_creep_speed(5.0, VehicleType::Motorbike);
+    let close = red_light_creep_speed(1.0, VehicleType::Motorbike);
+    assert!(
+        far > close,
+        "creep should be faster farther from stop line: far={far} > close={close}"
+    );
+}
+
+#[test]
+fn creep_speed_bounded_at_max() {
+    // At distance > 5m, creep speed should be capped at 0.3 m/s
+    let speed = red_light_creep_speed(10.0, VehicleType::Motorbike);
+    assert!(
+        (speed - 0.3).abs() < 1e-10,
+        "creep speed should be capped at 0.3 m/s, got {speed}"
+    );
+}
+
+// ---------- effective_filter_gap ----------
+
+#[test]
+fn effective_gap_at_zero_delta_v() {
+    // Base gap at zero speed difference
+    let gap = effective_filter_gap(0.5, 5.0, 5.0);
+    assert!(
+        (gap - 0.5).abs() < 1e-10,
+        "gap at delta_v=0 should be base (0.5m), got {gap}"
+    );
+}
+
+#[test]
+fn effective_gap_increases_with_speed_difference() {
+    // At delta_v=5.0 m/s, gap = 0.5 + 0.1 * 5.0 = 1.0m
+    let gap = effective_filter_gap(0.5, 10.0, 5.0);
+    assert!(
+        (gap - 1.0).abs() < 1e-10,
+        "gap at delta_v=5 should be 1.0m, got {gap}"
+    );
+}
+
+#[test]
+fn effective_gap_uses_config_base() {
+    // With different base gap
+    let gap = effective_filter_gap(0.6, 5.0, 5.0);
+    assert!(
+        (gap - 0.6).abs() < 1e-10,
+        "gap at delta_v=0 with 0.6 base should be 0.6m, got {gap}"
+    );
+}
+
+#[test]
+fn effective_gap_symmetric_on_speed_direction() {
+    // delta_v sign should not matter (absolute value)
+    let gap_faster = effective_filter_gap(0.5, 10.0, 5.0);
+    let gap_slower = effective_filter_gap(0.5, 5.0, 10.0);
+    assert!(
+        (gap_faster - gap_slower).abs() < 1e-10,
+        "gap should be symmetric: {gap_faster} vs {gap_slower}"
+    );
 }

@@ -62,6 +62,12 @@ pub struct VehicleTypeParams {
     pub right_bias: f64,
     /// Gap acceptance time-to-collision (s).
     pub gap_acceptance_ttc: f64,
+    /// Maximum red-light creep speed (m/s). 0.0 for non-creeping vehicles.
+    #[serde(default)]
+    pub creep_max_speed: f64,
+    /// Distance over which creep ramps to max speed (m). Default 5.0.
+    #[serde(default = "default_creep_distance_scale")]
+    pub creep_distance_scale: f64,
     /// Sublane minimum lateral gap for filtering (m). None for lane-based vehicles.
     pub min_filter_gap: Option<f64>,
     /// Sublane maximum lateral drift speed (m/s). None for lane-based vehicles.
@@ -85,6 +91,11 @@ pub struct PedestrianParams {
     pub jaywalking_rate_local: f64,
     /// Gap acceptance time-to-collision for crossing (s).
     pub gap_acceptance_ttc: f64,
+}
+
+/// Default creep distance scale (metres).
+fn default_creep_distance_scale() -> f64 {
+    5.0
 }
 
 /// Load vehicle configuration from a TOML file path.
@@ -233,6 +244,8 @@ impl Default for VehicleConfig {
                 safe_decel: -4.0,
                 right_bias: 0.1,
                 gap_acceptance_ttc: 1.0,
+                creep_max_speed: 0.3,
+                creep_distance_scale: 5.0,
                 min_filter_gap: Some(0.5),
                 max_lateral_speed: Some(1.2),
                 half_width: Some(0.25),
@@ -256,6 +269,8 @@ impl Default for VehicleConfig {
                 safe_decel: -4.0,
                 right_bias: 0.1,
                 gap_acceptance_ttc: 1.5,
+                creep_max_speed: 0.0,
+                creep_distance_scale: 5.0,
                 min_filter_gap: None,
                 max_lateral_speed: None,
                 half_width: None,
@@ -279,6 +294,8 @@ impl Default for VehicleConfig {
                 safe_decel: -4.0,
                 right_bias: 0.1,
                 gap_acceptance_ttc: 1.8,
+                creep_max_speed: 0.0,
+                creep_distance_scale: 5.0,
                 min_filter_gap: None,
                 max_lateral_speed: None,
                 half_width: None,
@@ -302,6 +319,8 @@ impl Default for VehicleConfig {
                 safe_decel: -4.0,
                 right_bias: 0.1,
                 gap_acceptance_ttc: 2.0,
+                creep_max_speed: 0.0,
+                creep_distance_scale: 5.0,
                 min_filter_gap: None,
                 max_lateral_speed: None,
                 half_width: None,
@@ -325,6 +344,8 @@ impl Default for VehicleConfig {
                 safe_decel: -4.0,
                 right_bias: 0.1,
                 gap_acceptance_ttc: 1.2,
+                creep_max_speed: 0.2,
+                creep_distance_scale: 5.0,
                 min_filter_gap: Some(0.5),
                 max_lateral_speed: Some(0.8),
                 half_width: Some(0.25),
@@ -348,6 +369,8 @@ impl Default for VehicleConfig {
                 safe_decel: -4.0,
                 right_bias: 0.1,
                 gap_acceptance_ttc: 0.5,
+                creep_max_speed: 0.0,
+                creep_distance_scale: 5.0,
                 min_filter_gap: None,
                 max_lateral_speed: None,
                 half_width: None,
