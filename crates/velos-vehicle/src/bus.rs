@@ -96,6 +96,11 @@ impl BusState {
         }
     }
 
+    /// The ordered stop indices for this bus route.
+    pub fn stop_indices(&self) -> &[usize] {
+        &self.stop_indices
+    }
+
     /// Check if the bus should stop at its next scheduled stop.
     ///
     /// Returns `true` when the agent is on the same edge as the next stop
