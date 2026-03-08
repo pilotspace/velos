@@ -29,7 +29,7 @@
 - [x] **Phase 12: CPU Lane-Change, Prediction Loop & GPU Config** - MOBIL overtaking, motorbike lateral filtering in GPU tick loop, prediction overlay refresh, HCMC creep/gap params to GPU (includes gap closure)
 - [x] **Phase 13: Final Integration Wiring & GPU Transfer Audit** - Wire profile encoding at spawn (INT-02/INT-01), GLOSA consumption (SIG-03), GPU pedestrian dispatch (AGT-04), CPU tick parity, and eliminate wasteful per-frame GPU transfers (completed 2026-03-08)
 - [x] **Phase 14: Wire GTFS → Bus Stops Pipeline** - Connect GTFS import output to SimWorld.bus_stops so bus dwell lifecycle is active, not inert (gap closure) (completed 2026-03-08)
-- [ ] **Phase 15: File Size Reduction & Housekeeping** - Split oversized files (sim.rs, compute.rs), fix stale tracking docs, finalize Phase 13 validation (tech debt closure)
+- [x] **Phase 15: File Size Reduction & Housekeeping** - Split oversized files (sim.rs, compute.rs), fix stale tracking docs, finalize Phase 13 validation (tech debt closure) (completed 2026-03-08)
 
 ## Phase Details
 
@@ -178,7 +178,7 @@ Phases 5 through 8 execute sequentially. Each phase depends on the prior phase.
 | 12. CPU Lane-Change, Prediction Loop & GPU Config | v1.1 | 2/2 | Complete | 2026-03-08 |
 | 13. Final Integration Wiring & GPU Transfer Audit | v1.1 | 3/3 | Complete | 2026-03-08 |
 | 14. Wire GTFS → Bus Stops Pipeline | v1.1 | 2/2 | Complete | 2026-03-08 |
-| 15. File Size Reduction & Housekeeping | v1.1 | 1/2 | In Progress | - |
+| 15. File Size Reduction & Housekeeping | 2/2 | Complete   | 2026-03-08 | - |
 
 ### Phase 12: CPU Lane-Change, Prediction Loop & GPU Config
 **Goal**: MOBIL lane-change overtaking and motorbike lateral filtering wired into GPU tick loop, PredictionService::update() runs every 60 sim-seconds in the frame loop so prediction overlay refreshes live, and HCMC creep/gap behavior constants propagate from TOML config to GPU uniform buffer — closing the last 2 partial requirements and 2 integration gaps from the v1.1 audit
@@ -242,7 +242,7 @@ Plans:
   3. REQUIREMENTS.md footer matches actual coverage (45/45 complete, 0 pending)
   4. ROADMAP.md Phase 5 and Phase 9 checkboxes reflect completed status
   5. Phase 13 VALIDATION.md is compliant (not draft)
-**Plans:** 2 plans
+**Plans:** 2/2 plans complete
 Plans:
 - [ ] 15-01-PLAN.md — Split sim.rs and compute.rs below 700-line convention
 - [x] 15-02-PLAN.md — Fix stale tracking docs and finalize Phase 13 validation
