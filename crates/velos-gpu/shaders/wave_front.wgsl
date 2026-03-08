@@ -357,6 +357,64 @@ fn handle_sign_interaction(agent: ptr<function, AgentState>, desired_speed: f32)
 }
 
 // ============================================================
+// HCMC behavior: red-light creep (matches CPU sublane.rs)
+// ============================================================
+
+// Only motorbikes and bicycles creep forward at red lights.
+// Creep speed ramps linearly with distance to stop line, capped at 0.3 m/s.
+const CREEP_MAX_SPEED: f32 = 0.3;
+const CREEP_DISTANCE_SCALE: f32 = 5.0;
+const CREEP_MIN_DISTANCE: f32 = 0.5;
+
+fn red_light_creep_speed(distance_to_stop: f32, vehicle_type: u32) -> f32 {
+    // Only motorbikes and bicycles creep
+    if vehicle_type != VT_MOTORBIKE && vehicle_type != VT_BICYCLE {
+        return 0.0;
+    }
+    // Too close to stop line — already at front of swarm
+    if distance_to_stop < CREEP_MIN_DISTANCE {
+        return 0.0;
+    }
+    let ramp = min(distance_to_stop / CREEP_DISTANCE_SCALE, 1.0);
+    return CREEP_MAX_SPEED * ramp;
+}
+
+// ============================================================
+// HCMC behavior: intersection gap acceptance (matches CPU intersection.rs)
+// ============================================================
+
+// Size intimidation: larger approaching vehicles increase required TTC gap.
+const GAP_MAX_WAIT_TIME: f32 = 5.0;
+const GAP_FORCED_ACCEPTANCE_FACTOR: f32 = 0.5;
+const GAP_WAIT_REDUCTION_RATE: f32 = 0.1;
+
+fn size_factor(approaching_type: u32) -> f32 {
+    switch approaching_type {
+        case 4u, 2u: { return 1.3; }   // Truck, Bus
+        case 5u: { return 2.0; }        // Emergency
+        case 0u, 3u: { return 0.8; }    // Motorbike, Bicycle
+        case 6u: { return 0.5; }        // Pedestrian
+        default: { return 1.0; }        // Car
+    }
+}
+
+/// Determine if a vehicle should proceed through an unsignalized intersection.
+/// Returns true if the gap is acceptable (TTC exceeds effective threshold).
+fn intersection_gap_acceptance(
+    other_type: u32, ttc: f32, ttc_threshold: f32, wait_time: f32,
+) -> bool {
+    let sf = size_factor(other_type);
+    var wait_mod: f32;
+    if wait_time >= GAP_MAX_WAIT_TIME {
+        wait_mod = GAP_FORCED_ACCEPTANCE_FACTOR;
+    } else {
+        wait_mod = 1.0 - GAP_WAIT_REDUCTION_RATE * min(wait_time, GAP_MAX_WAIT_TIME);
+    }
+    let effective = ttc_threshold * sf * wait_mod;
+    return ttc > effective;
+}
+
+// ============================================================
 // Wave-front kernel: one workgroup per lane, thread 0 only
 // ============================================================
 
@@ -456,6 +514,56 @@ fn wave_front_update(
 
         // Post-processing: traffic sign interaction (speed limits, stop signs, school zones)
         new_speed_f32 = handle_sign_interaction(&agent, new_speed_f32);
+
+        // Post-processing: HCMC perception-driven behaviors
+        // Read perception data for this agent (bounds-checked).
+        if agent_idx < arrayLength(&perception_results) {
+            let perc = perception_results[agent_idx];
+
+            // Red-light creep: motorbikes/bicycles inch forward at red signals
+            if perc.signal_state == SIGNAL_RED {
+                let creep = red_light_creep_speed(perc.signal_distance, agent.vehicle_type);
+                if creep > 0.0 {
+                    // Override: use creep speed instead of full stop
+                    new_speed_f32 = max(new_speed_f32, creep);
+                }
+            }
+
+            // Unsignalized intersection gap acceptance:
+            // When no signal present (signal_state == 3/none) and a leader is nearby,
+            // use gap acceptance to decide whether to proceed or decelerate.
+            if perc.signal_state == SIGNAL_NONE && perc.leader_gap < 100.0 {
+                // Estimate TTC from leader gap and closing speed
+                let closing_speed = max(own_speed_f32 - perc.leader_speed, 0.01);
+                let ttc = perc.leader_gap / closing_speed;
+
+                // Base TTC threshold from vehicle type headway (seconds)
+                let base_threshold = vehicle_params[vt].t_headway;
+
+                // Approximate wait_time: if nearly stopped, agent is waiting
+                // Use flags bit3 as wait accumulator indicator (0 = not waiting)
+                var wait_time = 0.0;
+                if own_speed_f32 < 0.5 {
+                    // Estimate wait from sim_time modulo — crude but GPU-friendly
+                    // In practice wait tracking happens on CPU; GPU uses 0.0 as safe default
+                    wait_time = 0.0;
+                }
+
+                // Leader vehicle type unknown from perception — use VT_CAR as
+                // neutral default (size_factor=1.0). Full type-aware gap acceptance
+                // runs on CPU with complete neighbor data.
+                let accept = intersection_gap_acceptance(
+                    VT_CAR,
+                    ttc,
+                    base_threshold,
+                    wait_time,
+                );
+                if !accept {
+                    // Gap not safe — decelerate to stop
+                    new_speed_f32 = max(new_speed_f32 - vehicle_params[vt].b * dt, 0.0);
+                }
+            }
+        }
 
         // Update position: pos += avg_speed * dt (trapezoidal for smoother integration)
         let avg_speed = (own_speed_f32 + new_speed_f32) * 0.5;
