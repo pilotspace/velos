@@ -25,7 +25,7 @@
 - [x] **Phase 8: Tuning Vehicle Behavior (HCM)** - Vehicle behavior externalized to TOML config, GPU/CPU parameter parity, HCMC-specific behavioral rules (completed 2026-03-08)
 - [ ] **Phase 9: Sim Loop Integration — Startup & Frame Pipeline** - Wire all Phase 6-8 modules into sim.rs tick_gpu() and app.rs startup: perception, reroute, polymorphic signals, sign upload, vehicle params, HCMC behaviors
 - [x] **Phase 10: Sim Loop Integration — Bus Dwell & Meso-Micro Hybrid** - Wire bus dwell lifecycle and velos-meso crate into sim loop for peripheral zone transitions (completed 2026-03-08)
-- [ ] **Phase 11: GPU Buffer Wiring — Perception & Emergency** - Wire perception result buffer to wave_front.wgsl binding(8) and emergency vehicle upload to sim loop tick (gap closure)
+- [x] **Phase 11: GPU Buffer Wiring — Perception & Emergency** - Wire perception result buffer to wave_front.wgsl binding(8) and emergency vehicle upload to sim loop tick (gap closure) (completed 2026-03-08)
 
 ## Phase Details
 
@@ -148,7 +148,7 @@ Plans:
   3. intersection_gap_acceptance() reads actual leader_speed and wait_time from perception buffer
   4. upload_emergency_vehicles() is called every frame in tick_gpu() — emergency_count > 0 when emergency vehicles exist
   5. GPU yield cone activates for agents near emergency vehicles (not early-exiting due to zero count)
-**Plans:** 1/2 plans executed
+**Plans:** 2/2 plans complete
 Plans:
 - [ ] 11-01-PLAN.md -- Perception buffer wiring: shared result buffer for binding(8)
 - [ ] 11-02-PLAN.md -- Emergency vehicle upload + FLAG_EMERGENCY_ACTIVE in step_vehicles_gpu
@@ -170,4 +170,4 @@ Phases 5 through 8 execute sequentially. Each phase depends on the prior phase.
 | 8. Tuning Vehicle Behavior (HCM) | v1.1 | 3/3 | Complete | 2026-03-08 |
 | 9. Sim Loop Integration — Startup & Frame Pipeline | 2/3 | In Progress|  | - |
 | 10. Sim Loop Integration — Bus Dwell & Meso-Micro | 2/2 | Complete    | 2026-03-08 | - |
-| 11. GPU Buffer Wiring — Perception & Emergency | 1/2 | In Progress|  | - |
+| 11. GPU Buffer Wiring — Perception & Emergency | 2/2 | Complete   | 2026-03-08 | - |
