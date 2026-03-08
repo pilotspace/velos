@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: SUMO Replacement Engine
 status: in_progress
-stopped_at: Completed 10-01-PLAN.md
-last_updated: "2026-03-08T07:26:49Z"
-last_activity: 2026-03-08 -- Completed Plan 10-01 (bus dwell wiring)
+stopped_at: Completed 10-02-PLAN.md
+last_updated: "2026-03-08T07:36:32Z"
+last_activity: 2026-03-08 -- Completed Plan 10-02 (meso-micro zone integration)
 progress:
   total_phases: 7
-  completed_phases: 5
+  completed_phases: 6
   total_plans: 27
-  completed_plans: 26
-  percent: 93
+  completed_plans: 27
+  percent: 96
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-03-07)
 ## Current Position
 
 Phase: 10 of 11 (Sim Loop Integration: Bus Dwell & Meso-Micro)
-Plan: 01 of 02 complete -- 01 (bus dwell wiring)
-Status: Phase 10 in progress
-Last activity: 2026-03-08 -- Completed Plan 10-01 (bus dwell wiring)
+Plan: 02 of 02 complete -- 02 (meso-micro zone integration)
+Status: Phase 10 complete
+Last activity: 2026-03-08 -- Completed Plan 10-02 (meso-micro zone integration)
 
-Progress: [█████████░] 93%
+Progress: [██████████] 96%
 
 ## Accumulated Context
 
@@ -138,6 +138,9 @@ Recent decisions affecting current work:
 - [10-01]: Bus dwell runs on CPU (state machine), GPU reads FLAG_BUS_DWELLING to hold speed=0
 - [10-01]: step_bus_dwell() inserted after vehicle physics, before pedestrian physics in pipeline
 - [10-01]: Stochastic passenger counts (uniform RNG) sufficient for engine proof; GTFS deferred
+- [10-02]: MesoAgentState preserves Route, VehicleType, IdmParams, CarFollowingModel, LateralOffset across zone transitions
+- [10-02]: Gap check 10m threshold prevents micro edge insertion when congested; blocked vehicles re-enqueue
+- [10-02]: step_meso() runs BEFORE step_vehicles_gpu (meso agents ready for buffer zone insertion before micro physics)
 
 ### Pending Todos
 
@@ -156,6 +159,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-08T07:26:49Z
-Stopped at: Completed 10-01-PLAN.md
-Resume file: .planning/phases/10-sim-loop-integration-bus-dwell-meso-micro/10-02-PLAN.md
+Last session: 2026-03-08T07:36:32Z
+Stopped at: Completed 10-02-PLAN.md
+Resume file: Phase 10 complete

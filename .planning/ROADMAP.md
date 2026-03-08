@@ -24,7 +24,7 @@
 - [x] **Phase 7: Intelligence, Routing & Prediction** - Agent intelligence (multi-factor cost, profiles, GPU perception/evaluation), CCH routing, prediction ensemble, staggered reroute, global knowledge routing (completed 2026-03-07)
 - [x] **Phase 8: Tuning Vehicle Behavior (HCM)** - Vehicle behavior externalized to TOML config, GPU/CPU parameter parity, HCMC-specific behavioral rules (completed 2026-03-08)
 - [ ] **Phase 9: Sim Loop Integration — Startup & Frame Pipeline** - Wire all Phase 6-8 modules into sim.rs tick_gpu() and app.rs startup: perception, reroute, polymorphic signals, sign upload, vehicle params, HCMC behaviors
-- [ ] **Phase 10: Sim Loop Integration — Bus Dwell & Meso-Micro Hybrid** - Wire bus dwell lifecycle and velos-meso crate into sim loop for peripheral zone transitions
+- [x] **Phase 10: Sim Loop Integration — Bus Dwell & Meso-Micro Hybrid** - Wire bus dwell lifecycle and velos-meso crate into sim loop for peripheral zone transitions (completed 2026-03-08)
 - [ ] **Phase 11: GPU Buffer Wiring — Perception & Emergency** - Wire perception result buffer to wave_front.wgsl binding(8) and emergency vehicle upload to sim loop tick (gap closure)
 
 ## Phase Details
@@ -132,7 +132,7 @@ Plans:
   1. begin_dwell() and tick_dwell() are called in the sim loop — buses stop at BusStop locations, FLAG_BUS_DWELLING is set, and dwell time follows the empirical model (5s + 0.5s/boarding + 0.67s/alighting)
   2. velos-meso is a dependency of velos-core or velos-gpu — the crate is imported and its queue model is active for peripheral zone edges
   3. Agents crossing from meso to micro zones pass through the 100m buffer zone with velocity-matching insertion — no speed discontinuities at zone boundaries
-**Plans:** 1/2 plans executed
+**Plans:** 2/2 plans complete
 Plans:
 - [ ] 10-01-PLAN.md — Bus dwell wiring: BusState spawn, step_bus_dwell CPU step, GPU FLAG_BUS_DWELLING guard
 - [ ] 10-02-PLAN.md — Meso-micro hybrid wiring: velos-meso dependency, zone config, step_meso, zone transitions
@@ -167,5 +167,5 @@ Phases 5 through 8 execute sequentially. Each phase depends on the prior phase.
 | 7. Intelligence, Routing & Prediction | v1.1 | 6/6 | Complete | 2026-03-07 |
 | 8. Tuning Vehicle Behavior (HCM) | v1.1 | 3/3 | Complete | 2026-03-08 |
 | 9. Sim Loop Integration — Startup & Frame Pipeline | 2/3 | In Progress|  | - |
-| 10. Sim Loop Integration — Bus Dwell & Meso-Micro | 1/2 | In Progress|  | - |
+| 10. Sim Loop Integration — Bus Dwell & Meso-Micro | 2/2 | Complete   | 2026-03-08 | - |
 | 11. GPU Buffer Wiring — Perception & Emergency | v1.1 | 0/0 | Planned | - |
