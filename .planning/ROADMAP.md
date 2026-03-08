@@ -170,4 +170,4 @@ Phases 5 through 8 execute sequentially. Each phase depends on the prior phase.
 | 8. Tuning Vehicle Behavior (HCM) | v1.1 | 3/3 | Complete | 2026-03-08 |
 | 9. Sim Loop Integration — Startup & Frame Pipeline | 2/3 | In Progress|  | - |
 | 10. Sim Loop Integration — Bus Dwell & Meso-Micro | 2/2 | Complete    | 2026-03-08 | - |
-| 11. GPU Buffer Wiring — Perception & Emergency | 2/2 | Complete   | 2026-03-08 | - |
+| 11. GPU Buffer Wiring — Perception & Emergency | 2/2 | Complete    | 2026-03-08 | - |
