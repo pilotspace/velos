@@ -46,26 +46,26 @@ Prove VELOS can replace SUMO: reimplement all core SUMO features, add agent inte
 
 - [x] **INT-01**: Multi-factor pathfinding cost function: time, comfort, safety, fuel, signal delay, prediction penalty
 - [x] **INT-02**: Configurable agent profiles (Commuter, Bus, Truck, Emergency, Tourist, Teen, Senior, Cyclist) with per-profile cost weights
-- [ ] **INT-03**: GPU perception phase: sense leader vehicle, signal state, traffic signs, nearby agents, global congestion map
-- [ ] **INT-04**: GPU evaluation phase: cost comparison current route vs alternative, output should_reroute flag + cost_delta
-- [ ] **INT-05**: Staggered reroute evaluation (1K agents/step, ~50s full cycle) with immediate triggers for blocked edges, emergency vehicles, and prediction flags
+- [x] **INT-03**: GPU perception phase: sense leader vehicle, signal state, traffic signs, nearby agents, global congestion map
+- [x] **INT-04**: GPU evaluation phase: cost comparison current route vs alternative, output should_reroute flag + cost_delta
+- [x] **INT-05**: Staggered reroute evaluation (1K agents/step, ~50s full cycle) with immediate triggers for blocked edges, emergency vehicles, and prediction flags
 
 ### Routing & Prediction
 
 - [x] **RTE-01**: CCH (Customizable Contraction Hierarchies) replaces A* for pathfinding on 25K-edge network
 - [x] **RTE-02**: CCH supports 3ms dynamic weight customization without full re-contraction
-- [ ] **RTE-03**: Dynamic agent rerouting at 500 reroutes/step using CCH queries (0.02ms/query)
+- [x] **RTE-03**: Dynamic agent rerouting at 500 reroutes/step using CCH queries (0.02ms/query)
 - [x] **RTE-04**: BPR + ETS + historical prediction ensemble runs in-process every 60 sim-seconds
 - [x] **RTE-05**: Prediction overlay uses ArcSwap for zero-copy, lock-free weight updates to CCH
 - [x] **RTE-06**: Global network knowledge routing -- real-time congestion map (edge travel times) feeds into pathfinding cost function
-- [ ] **RTE-07**: Prediction-informed routing -- cost function uses predicted future travel times, not just current observed
+- [x] **RTE-07**: Prediction-informed routing -- cost function uses predicted future travel times, not just current observed
 
 ### Signal Control & V2I
 
 - [x] **SIG-01**: Actuated signal control with loop detector-triggered phase transitions
 - [x] **SIG-02**: Adaptive signal control with demand-responsive timing optimization
-- [ ] **SIG-03**: SPaT (Signal Phase and Timing) broadcast to agents within range for signal-aware driving
-- [ ] **SIG-04**: Signal priority request from buses and emergency vehicles
+- [x] **SIG-03**: SPaT (Signal Phase and Timing) broadcast to agents within range for signal-aware driving
+- [x] **SIG-04**: Signal priority request from buses and emergency vehicles
 - [x] **SIG-05**: Traffic sign interaction: speed limits, stop/yield, no-turn restrictions, school zones affect agent speed targets and cost function
 
 ### HCMC Behavior Tuning
@@ -157,21 +157,21 @@ Which phases cover which requirements. Updated during roadmap creation.
 | AGT-08 | Phase 6 | Complete |
 | SIG-01 | Phase 9 | Complete |
 | SIG-02 | Phase 9 | Complete |
-| SIG-03 | Phase 9 | Pending |
-| SIG-04 | Phase 9 | Pending |
+| SIG-03 | Phase 9 | Complete |
+| SIG-04 | Phase 9 | Complete |
 | SIG-05 | Phase 9 | Complete |
 | INT-01 | Phase 7 | Complete |
 | INT-02 | Phase 7 | Complete |
-| INT-03 | Phase 9 | Pending |
-| INT-04 | Phase 9 | Pending |
-| INT-05 | Phase 9 | Pending |
+| INT-03 | Phase 9 | Complete |
+| INT-04 | Phase 9 | Complete |
+| INT-05 | Phase 9 | Complete |
 | RTE-01 | Phase 7 | Complete |
 | RTE-02 | Phase 7 | Complete |
-| RTE-03 | Phase 9 | Pending |
+| RTE-03 | Phase 9 | Complete |
 | RTE-04 | Phase 7 | Complete |
 | RTE-05 | Phase 7 | Complete |
 | RTE-06 | Phase 7 | Complete |
-| RTE-07 | Phase 9 | Pending |
+| RTE-07 | Phase 9 | Complete |
 | TUN-01 | Phase 8 | Complete |
 | TUN-02 | Phase 9 | Complete |
 | TUN-03 | Phase 8 | Complete |

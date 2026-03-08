@@ -3,9 +3,9 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: SUMO Replacement Engine
 status: in-progress
-stopped_at: Completed 09-01-PLAN.md
-last_updated: "2026-03-08T05:16:00Z"
-last_activity: 2026-03-08 -- Completed Plan 09-01 (startup initialization wiring)
+stopped_at: Completed 09-03-PLAN.md
+last_updated: "2026-03-08T05:27:00Z"
+last_activity: 2026-03-08 -- Completed Plan 09-03 (full frame pipeline wiring)
 progress:
   total_phases: 6
   completed_phases: 4
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-03-07)
 ## Current Position
 
 Phase: 9 of 10 (Sim Loop Integration, Startup & Frame Pipeline)
-Plan: 03 of 03 complete -- Plans 01 (startup init), 02 (HCMC behaviors) done; 03 (detector wiring) remaining
-Status: In progress
-Last activity: 2026-03-08 -- Completed Plan 09-01 (startup initialization wiring)
+Plan: 03 of 03 complete -- All plans done: 01 (startup init), 02 (HCMC behaviors), 03 (full frame pipeline)
+Status: Phase 09 complete
+Last activity: 2026-03-08 -- Completed Plan 09-03 (full frame pipeline wiring)
 
-Progress: [████████░░] 80%
+Progress: [█████████░] 90%
 
 ## Accumulated Context
 
@@ -131,6 +131,10 @@ Recent decisions affecting current work:
 - [09-02]: Placeholder perception_result_buffer pre-allocated 300K agents (9.6 MB zeroed) -- avoids Option complexity
 - [09-02]: Gap acceptance defaults VT_CAR for unknown leader type -- neutral size_factor, full type-aware logic on CPU
 - [09-02]: naga dev-dependency for automated WGSL parse validation in unit tests
+- [09-03]: Loop detector prev_pos approximation uses speed * 0.1s backward estimate (avoids HashMap storage)
+- [09-03]: Signal priority proximity threshold 100m from intersection on incoming edge
+- [09-03]: PerceptionBuffers pre-allocated at startup with zeroed congestion grid (20x20, 500m cells)
+- [09-03]: step_pedestrians extracted to sim_pedestrians.rs for sim.rs 700-line compliance
 
 ### Pending Todos
 
@@ -149,6 +153,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-08T05:16:00Z
-Stopped at: Completed 09-01-PLAN.md (startup initialization)
-Resume file: .planning/phases/09-sim-loop-integration-startup-frame-pipeline/09-03-PLAN.md
+Last session: 2026-03-08T05:27:00Z
+Stopped at: Completed 09-03-PLAN.md (full frame pipeline wiring)
+Resume file: Phase 09 complete. Next: Phase 10 (gap closure)
