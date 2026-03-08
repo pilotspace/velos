@@ -28,7 +28,7 @@
 - [x] **Phase 11: GPU Buffer Wiring — Perception & Emergency** - Wire perception result buffer to wave_front.wgsl binding(8) and emergency vehicle upload to sim loop tick (gap closure) (completed 2026-03-08)
 - [x] **Phase 12: CPU Lane-Change, Prediction Loop & GPU Config** - MOBIL overtaking, motorbike lateral filtering in GPU tick loop, prediction overlay refresh, HCMC creep/gap params to GPU (includes gap closure)
 - [x] **Phase 13: Final Integration Wiring & GPU Transfer Audit** - Wire profile encoding at spawn (INT-02/INT-01), GLOSA consumption (SIG-03), GPU pedestrian dispatch (AGT-04), CPU tick parity, and eliminate wasteful per-frame GPU transfers (completed 2026-03-08)
-- [ ] **Phase 14: Wire GTFS → Bus Stops Pipeline** - Connect GTFS import output to SimWorld.bus_stops so bus dwell lifecycle is active, not inert (gap closure)
+- [x] **Phase 14: Wire GTFS → Bus Stops Pipeline** - Connect GTFS import output to SimWorld.bus_stops so bus dwell lifecycle is active, not inert (gap closure) (completed 2026-03-08)
 - [ ] **Phase 15: File Size Reduction & Housekeeping** - Split oversized files (sim.rs, compute.rs), fix stale tracking docs, finalize Phase 13 validation (tech debt closure)
 
 ## Phase Details
@@ -177,7 +177,7 @@ Phases 5 through 8 execute sequentially. Each phase depends on the prior phase.
 | 11. GPU Buffer Wiring — Perception & Emergency | 2/2 | Complete    | 2026-03-08 | - |
 | 12. CPU Lane-Change, Prediction Loop & GPU Config | 2/2 | Complete    | 2026-03-08 | - |
 | 13. Final Integration Wiring & GPU Transfer Audit | 3/3 | Complete    | 2026-03-08 | - |
-| 14. Wire GTFS → Bus Stops Pipeline | v1.1 | 1/2 | In Progress | - |
+| 14. Wire GTFS → Bus Stops Pipeline | 2/2 | Complete   | 2026-03-08 | - |
 | 15. File Size Reduction & Housekeeping | v1.1 | 0/0 | Not Started | - |
 
 ### Phase 12: CPU Lane-Change, Prediction Loop & GPU Config
@@ -226,7 +226,7 @@ Plans:
   1. SimWorld startup loads GTFS data and populates bus_stops — bus_stops.len() > 0 when GTFS data is available
   2. Bus agents spawned on GTFS routes encounter BusStop locations and trigger begin_dwell() — FLAG_BUS_DWELLING is set during dwell
   3. E2E bus dwell lifecycle works: GTFS load → bus_stops populated → bus arrives → dwell → resume
-**Plans:** 2 plans
+**Plans:** 2/2 plans complete
 Plans:
 - [x] 14-01-PLAN.md — Edge R-tree stop snapping (velos-net) + BusSpawner (velos-demand)
 - [ ] 14-02-PLAN.md — Wire GTFS loading + bus spawning into SimWorld startup and frame loop
