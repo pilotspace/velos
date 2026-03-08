@@ -27,7 +27,7 @@
 - [x] **Phase 10: Sim Loop Integration — Bus Dwell & Meso-Micro Hybrid** - Wire bus dwell lifecycle and velos-meso crate into sim loop for peripheral zone transitions (completed 2026-03-08)
 - [x] **Phase 11: GPU Buffer Wiring — Perception & Emergency** - Wire perception result buffer to wave_front.wgsl binding(8) and emergency vehicle upload to sim loop tick (gap closure) (completed 2026-03-08)
 - [x] **Phase 12: CPU Lane-Change, Prediction Loop & GPU Config** - MOBIL overtaking, motorbike lateral filtering in GPU tick loop, prediction overlay refresh, HCMC creep/gap params to GPU (includes gap closure)
-- [ ] **Phase 13: Final Integration Wiring & GPU Transfer Audit** - Wire profile encoding at spawn (INT-02/INT-01), GLOSA consumption (SIG-03), GPU pedestrian dispatch (AGT-04), CPU tick parity, and eliminate wasteful per-frame GPU transfers
+- [x] **Phase 13: Final Integration Wiring & GPU Transfer Audit** - Wire profile encoding at spawn (INT-02/INT-01), GLOSA consumption (SIG-03), GPU pedestrian dispatch (AGT-04), CPU tick parity, and eliminate wasteful per-frame GPU transfers (completed 2026-03-08)
 
 ## Phase Details
 
@@ -174,7 +174,7 @@ Phases 5 through 8 execute sequentially. Each phase depends on the prior phase.
 | 10. Sim Loop Integration — Bus Dwell & Meso-Micro | 2/2 | Complete    | 2026-03-08 | - |
 | 11. GPU Buffer Wiring — Perception & Emergency | 2/2 | Complete    | 2026-03-08 | - |
 | 12. CPU Lane-Change, Prediction Loop & GPU Config | 2/2 | Complete    | 2026-03-08 | - |
-| 13. Final Integration Wiring & GPU Transfer Audit | 2/3 | In Progress|  | - |
+| 13. Final Integration Wiring & GPU Transfer Audit | 3/3 | Complete   | 2026-03-08 | - |
 
 ### Phase 12: CPU Lane-Change, Prediction Loop & GPU Config
 **Goal**: MOBIL lane-change overtaking and motorbike lateral filtering wired into GPU tick loop, PredictionService::update() runs every 60 sim-seconds in the frame loop so prediction overlay refreshes live, and HCMC creep/gap behavior constants propagate from TOML config to GPU uniform buffer — closing the last 2 partial requirements and 2 integration gaps from the v1.1 audit
@@ -207,7 +207,7 @@ Plans:
   5. Signal buffer upload uses dirty flag — only transfers when signal phase changes (not every frame)
   6. Edge travel ratio buffer skips upload when prediction overlay hasn't updated
   7. Unused congestion grid buffer and GpuAgentState acceleration field are removed
-**Plans:** 2/3 plans executed
+**Plans:** 3/3 plans complete
 Plans:
 - [ ] 13-01-PLAN.md — Profile encoding at spawn + GLOSA advisory speed wiring (INT-01, INT-02, SIG-03)
 - [ ] 13-02-PLAN.md — GPU pedestrian adaptive pipeline activation (AGT-04)

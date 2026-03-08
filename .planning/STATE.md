@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: SUMO Replacement Engine
 status: executing
-stopped_at: Completed 13-01-PLAN.md (agent profile wiring + GLOSA advisory speed)
-last_updated: "2026-03-08T13:32:31.661Z"
-last_activity: 2026-03-08 -- Completed Plan 13-02 (pedestrian GPU adaptive pipeline wiring)
+stopped_at: Completed 13-03-PLAN.md (CPU tick parity + dirty-flag GPU buffer optimization)
+last_updated: "2026-03-08T13:44:07Z"
+last_activity: 2026-03-08 -- Completed Plan 13-03 and Phase 13 (all plans complete)
 progress:
   total_phases: 9
-  completed_phases: 8
+  completed_phases: 9
   total_plans: 34
-  completed_plans: 33
-  percent: 97
+  completed_plans: 34
+  percent: 100
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-03-07)
 ## Current Position
 
 Phase: 13 of 13 (Final Integration Wiring & GPU Transfer Audit)
-Plan: 02 of 03 complete -- 02 (pedestrian GPU adaptive pipeline wiring)
-Status: In progress
-Last activity: 2026-03-08 -- Completed Plan 13-02 (pedestrian GPU adaptive pipeline wiring)
+Plan: 03 of 03 complete -- 03 (CPU tick parity + dirty-flag GPU buffer optimization)
+Status: Phase complete
+Last activity: 2026-03-08 -- Completed Plan 13-03 (CPU tick parity + dirty-flag optimization)
 
-Progress: [█████████░] 97%
+Progress: [██████████] 100%
 
 ## Accumulated Context
 
@@ -156,6 +156,10 @@ Recent decisions affecting current work:
 - [13-02]: classify_density used for adaptive cell sizing (2m/5m/10m) instead of hardcoded 3m in GPU pedestrian dispatch
 - [13-02]: 5m bounding box margin prevents degenerate zero-size grids when pedestrians are co-located
 - [13-02]: CPU tick() step_pedestrians unchanged -- GPU path only in tick_gpu()
+- [13-03]: CPU tick() step_lane_changes added at step 6.7 for MOBIL parity with GPU tick_gpu() pipeline
+- [13-03]: Dirty-flag gated GPU buffer uploads: signal_dirty/prediction_dirty fields on SimWorld
+- [13-03]: Phase transition detection via get_phase_state(0) comparison before/after ctrl.tick()
+- [13-03]: Dirty flags initialized true to force initial upload on first frame
 
 ### Pending Todos
 
@@ -176,6 +180,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-08T13:32:31.657Z
-Stopped at: Completed 13-01-PLAN.md (agent profile wiring + GLOSA advisory speed)
+Last session: 2026-03-08T13:44:07Z
+Stopped at: Completed 13-03-PLAN.md (CPU tick parity + dirty-flag GPU buffer optimization) -- Phase 13 complete
 Resume file: None
