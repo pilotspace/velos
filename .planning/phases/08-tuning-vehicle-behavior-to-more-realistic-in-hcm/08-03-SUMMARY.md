@@ -105,6 +105,17 @@ None - no external service configuration required.
 - Phase 08 complete: config infrastructure (08-01), sublane enhancements (08-02), behavioral rules (08-03)
 - Ready for GPU shader integration to consume these CPU-side behavioral functions
 
+## Self-Check: PASSED
+
+- [x] crates/velos-vehicle/src/intersection.rs exists
+- [x] crates/velos-vehicle/tests/intersection_tests.rs exists
+- [x] crates/velos-vehicle/src/sublane.rs exists (modified)
+- [x] crates/velos-vehicle/src/config.rs exists (modified)
+- [x] data/hcmc/vehicle_params.toml exists (modified)
+- [x] Commit ebc5710 (Task 1) exists
+- [x] Commit 478ff5c (Task 2) exists
+- [x] All 37 tests pass, clippy clean
+
 ---
 *Phase: 08-tuning-vehicle-behavior-to-more-realistic-in-hcm*
 *Completed: 2026-03-08*
