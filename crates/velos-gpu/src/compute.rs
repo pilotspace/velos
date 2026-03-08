@@ -12,8 +12,70 @@
 use std::collections::HashMap;
 
 use velos_core::components::GpuAgentState;
+use velos_vehicle::config::VehicleConfig;
 
 use crate::buffers::BufferPool;
+
+/// Per-vehicle-type parameters for GPU shader uniform buffer.
+///
+/// Layout: 7 vehicle types x 8 f32 parameters = 224 bytes.
+/// Each row: `[v0, s0, t_headway, a, b, krauss_accel, krauss_decel, krauss_sigma]`
+///
+/// Indexed by `vehicle_type` (u32): 0=Motorbike, 1=Car, 2=Bus, 3=Bicycle,
+/// 4=Truck, 5=Emergency, 6=Pedestrian.
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct GpuVehicleParams {
+    pub params: [[f32; 8]; 7],
+}
+
+impl GpuVehicleParams {
+    /// Convert a [`VehicleConfig`] to GPU-ready parameter buffer.
+    ///
+    /// Maps each vehicle type's IDM + Krauss parameters to the 8-float row.
+    /// Pedestrian uses `desired_speed` for v0, `personal_space` for s0,
+    /// and zeroes for car-following params (pedestrians use social force).
+    pub fn from_config(config: &VehicleConfig) -> Self {
+        let vehicle_types = [
+            &config.motorbike,
+            &config.car,
+            &config.bus,
+            &config.bicycle,
+            &config.truck,
+            &config.emergency,
+        ];
+
+        let mut params = [[0.0_f32; 8]; 7];
+
+        for (i, vt) in vehicle_types.iter().enumerate() {
+            params[i] = [
+                vt.v0 as f32,
+                vt.s0 as f32,
+                vt.t_headway as f32,
+                vt.a as f32,
+                vt.b as f32,
+                vt.krauss_accel as f32,
+                vt.krauss_decel as f32,
+                vt.krauss_sigma as f32,
+            ];
+        }
+
+        // Index 6: Pedestrian (social force model, not car-following)
+        let ped = &config.pedestrian;
+        params[6] = [
+            ped.desired_speed as f32, // v0 = desired walking speed
+            ped.personal_space as f32, // s0 = personal space radius
+            1.0,                       // t_headway (not used, sensible default)
+            1.0,                       // a (not used)
+            2.0,                       // b (not used)
+            1.0,                       // krauss_accel (not used)
+            3.0,                       // krauss_decel (not used)
+            0.0,                       // krauss_sigma (not used)
+        ];
+
+        Self { params }
+    }
+}
 
 /// Uniform params buffer layout. Must match WGSL `struct Params` in both shaders.
 #[repr(C)]
@@ -64,6 +126,9 @@ pub struct ComputeDispatcher {
     wf_bind_group_layout: wgpu::BindGroupLayout,
     wf_params_buffer: wgpu::Buffer,
 
+    // Vehicle params uniform buffer (binding 7)
+    vehicle_params_buffer: wgpu::Buffer,
+
     // Wave-front GPU buffers for lane data + agent state
     agent_buffer: Option<wgpu::Buffer>,
     lane_offsets_buffer: Option<wgpu::Buffer>,
@@ -71,6 +136,7 @@ pub struct ComputeDispatcher {
     lane_agents_buffer: Option<wgpu::Buffer>,
     staging_buffer: Option<wgpu::Buffer>,
     emergency_buffer: wgpu::Buffer,
+    sign_buffer: wgpu::Buffer,
 
     /// Current agent count in GPU buffers.
     pub wave_front_agent_count: u32,
@@ -142,6 +208,8 @@ impl ComputeDispatcher {
                     bgl_entry(3, wgpu::BufferBindingType::Storage { read_only: true }, false),
                     bgl_entry(4, wgpu::BufferBindingType::Storage { read_only: true }, false),
                     bgl_entry(5, wgpu::BufferBindingType::Storage { read_only: true }, false),
+                    bgl_entry(6, wgpu::BufferBindingType::Storage { read_only: true }, false),
+                    bgl_entry(7, wgpu::BufferBindingType::Uniform, false),
                 ],
             });
 
@@ -175,6 +243,24 @@ impl ComputeDispatcher {
             mapped_at_creation: false,
         });
 
+        // Sign buffer: 16 bytes per GpuSign (sign_type u32 + value f32 + edge_id u32 + offset_m f32).
+        // Pre-allocate for 256 signs; zero-length storage buffers are invalid in wgpu.
+        let sign_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("wf_signs"),
+            size: (256 * 16) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        // Vehicle params uniform buffer: 7 types * 8 f32 = 224 bytes.
+        // Must be populated via upload_vehicle_params() before first dispatch.
+        let vehicle_params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("wf_vehicle_params"),
+            size: std::mem::size_of::<GpuVehicleParams>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
         Self {
             pipeline,
             bind_group_layout,
@@ -187,7 +273,9 @@ impl ComputeDispatcher {
             lane_counts_buffer: None,
             lane_agents_buffer: None,
             staging_buffer: None,
+            vehicle_params_buffer,
             emergency_buffer,
+            sign_buffer,
             wave_front_agent_count: 0,
             wave_front_lane_count: 0,
             step_counter: 0,
@@ -316,6 +404,14 @@ impl ComputeDispatcher {
         }
     }
 
+    /// Upload per-vehicle-type parameters to the GPU uniform buffer (binding 7).
+    ///
+    /// Call this once at startup (with `GpuVehicleParams::from_config`) and again
+    /// whenever vehicle configuration changes at runtime.
+    pub fn upload_vehicle_params(&self, queue: &wgpu::Queue, params: &GpuVehicleParams) {
+        queue.write_buffer(&self.vehicle_params_buffer, 0, bytemuck::bytes_of(params));
+    }
+
     /// Encode a wave-front compute dispatch. One workgroup per lane.
     pub fn dispatch_wave_front(
         &mut self,
@@ -367,6 +463,14 @@ impl ComputeDispatcher {
                 wgpu::BindGroupEntry {
                     binding: 5,
                     resource: self.emergency_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: self.sign_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: self.vehicle_params_buffer.as_entire_binding(),
                 },
             ],
         });
