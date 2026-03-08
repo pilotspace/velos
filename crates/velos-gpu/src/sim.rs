@@ -27,6 +27,7 @@ use velos_signal::priority::{PriorityLevel, PriorityRequest};
 use velos_signal::SignalController;
 use velos_meso::queue_model::SpatialQueue;
 use velos_meso::zone_config::ZoneConfig;
+use velos_demand::BusSpawner;
 use velos_vehicle::bus::{BusDwellModel, BusStop};
 use velos_vehicle::config::VehicleConfig;
 use velos_vehicle::social_force::SocialForceParams;
@@ -140,6 +141,8 @@ pub struct SimWorld {
     pub bus_stops: Vec<BusStop>,
     /// Empirical bus dwell time model parameters.
     pub(crate) bus_dwell_model: BusDwellModel,
+    /// GTFS bus spawner for time-gated bus agent creation. None when no GTFS data loaded.
+    pub(crate) bus_spawner: Option<BusSpawner>,
     /// Whether mesoscopic zone simulation is enabled (default false).
     pub meso_enabled: bool,
     /// Zone configuration: maps edge IDs to Micro/Meso/Buffer zones.
@@ -246,6 +249,7 @@ impl SimWorld {
             perception_buffers: Some(perception_buffers),
             bus_stops: Vec::new(),
             bus_dwell_model: BusDwellModel::default(),
+            bus_spawner: None,
             meso_enabled: false,
             zone_config: sim_startup::load_zone_config(),
             meso_queues: HashMap::new(),
@@ -257,6 +261,13 @@ impl SimWorld {
 
         // Initialize reroute subsystem (builds CCH, prediction service).
         sim.init_reroute();
+
+        // Load GTFS bus stop data and create bus spawner (after init_reroute
+        // so CCH is available if future inter-stop path computation needs it).
+        let (gtfs_bus_stops, bus_spawner, _stop_id_map) =
+            sim_startup::load_gtfs_bus_stops(&sim.road_graph);
+        sim.bus_stops = gtfs_bus_stops;
+        sim.bus_spawner = bus_spawner;
 
         log::info!(
             "SimWorld initialized: {} signal controllers, perception pipeline ready",
@@ -304,6 +315,7 @@ impl SimWorld {
             perception_buffers: None,
             bus_stops: Vec::new(),
             bus_dwell_model: BusDwellModel::default(),
+            bus_spawner: None,
             meso_enabled: false,
             zone_config: sim_startup::load_zone_config(),
             meso_queues: HashMap::new(),

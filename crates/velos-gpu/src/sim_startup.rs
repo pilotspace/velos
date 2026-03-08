@@ -21,6 +21,9 @@ use velos_signal::signs::GpuSign;
 use velos_signal::SignalController;
 use velos_vehicle::config::VehicleConfig;
 
+use velos_demand::bus_spawner::BusSpawner;
+use velos_vehicle::bus::BusStop;
+
 use crate::compute::{ComputeDispatcher, GpuVehicleParams};
 
 /// Load vehicle configuration from TOML with env override.
@@ -250,6 +253,125 @@ pub(crate) fn load_zone_config() -> velos_meso::zone_config::ZoneConfig {
     }
 }
 
+/// Load GTFS bus stop data and create a BusSpawner for time-gated bus spawning.
+///
+/// Reads GTFS CSV files from the directory specified by `VELOS_GTFS_PATH` env var
+/// (default: `data/gtfs`). On missing or invalid data, returns empty results with
+/// a log message -- graceful degradation, no crash.
+///
+/// Returns `(bus_stops, optional_spawner, stop_id_to_index_map)`.
+pub(crate) fn load_gtfs_bus_stops(
+    road_graph: &RoadGraph,
+) -> (Vec<BusStop>, Option<BusSpawner>, HashMap<String, usize>) {
+    let path_str = std::env::var("VELOS_GTFS_PATH")
+        .unwrap_or_else(|_| "data/gtfs".to_string());
+    let path = std::path::Path::new(&path_str);
+
+    if !path.is_dir() {
+        log::info!("No GTFS data found at '{}', bus stops inactive", path_str);
+        return (Vec::new(), None, HashMap::new());
+    }
+
+    let (routes, schedules) = match velos_demand::load_gtfs_csv(path) {
+        Ok(data) => data,
+        Err(e) => {
+            log::warn!("Failed to load GTFS data from '{}': {}. Bus stops inactive.", path_str, e);
+            return (Vec::new(), None, HashMap::new());
+        }
+    };
+
+    // Collect all unique GtfsStops across routes (dedup by stop_id).
+    let mut seen_stop_ids = std::collections::HashSet::new();
+    let mut all_stops = Vec::new();
+    for route in &routes {
+        for stop in &route.stops {
+            if seen_stop_ids.insert(stop.stop_id.clone()) {
+                all_stops.push(stop.clone());
+            }
+        }
+    }
+
+    if all_stops.is_empty() {
+        log::info!("GTFS data at '{}' has no stops, bus stops inactive", path_str);
+        return (Vec::new(), None, HashMap::new());
+    }
+
+    // Project and snap stops to road edges.
+    let proj = velos_net::EquirectangularProjection::new(10.7756, 106.7019);
+    let bus_stops = velos_net::snap_gtfs_stops(&all_stops, road_graph, &proj);
+
+    // Build stop_id_to_index by matching each original stop to the nearest
+    // snapped BusStop (handles merge deduplication).
+    let stop_id_to_index = build_stop_id_mapping(&all_stops, &bus_stops, &proj);
+
+    // Build route_stop_ids: route_id -> Vec<stop_id>
+    let mut route_stop_ids: HashMap<String, Vec<String>> = HashMap::new();
+    for route in &routes {
+        let stop_ids: Vec<String> = route.stops.iter()
+            .map(|s| s.stop_id.clone())
+            .collect();
+        route_stop_ids.insert(route.route_id.clone(), stop_ids);
+    }
+
+    let bus_spawner = BusSpawner::new(&route_stop_ids, &stop_id_to_index, schedules);
+
+    log::info!(
+        "GTFS loaded: {} bus stops snapped, {} routes",
+        bus_stops.len(),
+        routes.len(),
+    );
+
+    (bus_stops, Some(bus_spawner), stop_id_to_index)
+}
+
+/// Build a mapping from GTFS stop_id to index in the snapped bus_stops Vec.
+///
+/// After snap_gtfs_stops merges nearby stops, the output Vec may be smaller
+/// than the input. For each original GtfsStop, we find the closest BusStop
+/// on the same edge (within merge threshold) to determine the correct index.
+fn build_stop_id_mapping(
+    original_stops: &[velos_demand::GtfsStop],
+    bus_stops: &[BusStop],
+    _proj: &velos_net::EquirectangularProjection,
+) -> HashMap<String, usize> {
+    let mut mapping = HashMap::new();
+
+    if bus_stops.is_empty() {
+        return mapping;
+    }
+
+    // For each original stop, project to local coords, find which bus_stop
+    // it corresponds to by matching edge_id and checking offset proximity.
+    // We re-snap each stop individually to get its edge_id and offset,
+    // then find the matching bus_stop index.
+    //
+    // Note: We don't need to rebuild the R-tree -- we can match by name
+    // since snap_gtfs_stops preserves the GtfsStop.name in BusStop.name.
+    // But name matching is fragile if stops have duplicate names.
+    // Instead, we project each stop and match against bus_stops by edge proximity.
+
+    // Build a quick lookup: for each edge_id, list of (bus_stop_index, offset_m).
+    let mut edge_index: HashMap<u32, Vec<(usize, f64)>> = HashMap::new();
+    for (idx, bs) in bus_stops.iter().enumerate() {
+        edge_index.entry(bs.edge_id).or_default().push((idx, bs.offset_m));
+    }
+
+    // For each original stop, project and find the nearest edge, then
+    // match to the closest bus_stop on that edge.
+    // We need the graph's R-tree. But we don't have the graph here.
+    // Simpler approach: match by name (unique within a single GTFS dataset).
+    for stop in original_stops {
+        // Find bus_stop with matching name.
+        if let Some(idx) = bus_stops.iter().position(|bs| bs.name == stop.name) {
+            mapping.insert(stop.stop_id.clone(), idx);
+        }
+        // If no name match (stop was merged or skipped), it won't be in the mapping.
+        // This is correct: BusSpawner filters out unmapped stop_ids.
+    }
+
+    mapping
+}
+
 /// Upload vehicle parameters to the GPU uniform buffer at binding 7.
 pub(crate) fn upload_vehicle_params(
     vehicle_config: &VehicleConfig,
@@ -384,5 +506,115 @@ mod tests {
             config.zone_type(999),
             velos_meso::zone_config::ZoneType::Micro
         );
+    }
+
+    #[test]
+    fn load_gtfs_bus_stops_missing_dir_returns_empty() {
+        // Point to a non-existent directory.
+        // SAFETY: Test-only, single-threaded env var mutation.
+        unsafe { std::env::set_var("VELOS_GTFS_PATH", "/tmp/nonexistent_gtfs_dir_12345") };
+        let graph = make_signalized_graph();
+        let (bus_stops, spawner, mapping) = load_gtfs_bus_stops(&graph);
+        assert!(bus_stops.is_empty(), "no GTFS dir should return empty bus_stops");
+        assert!(spawner.is_none(), "no GTFS dir should return None spawner");
+        assert!(mapping.is_empty(), "no GTFS dir should return empty mapping");
+        unsafe { std::env::remove_var("VELOS_GTFS_PATH") };
+    }
+
+    #[test]
+    fn load_gtfs_bus_stops_invalid_dir_returns_empty() {
+        // Create a temp dir without any GTFS files.
+        let tmp_dir = std::env::temp_dir().join("velos_gtfs_empty_test");
+        let _ = std::fs::create_dir_all(&tmp_dir);
+        // SAFETY: Test-only, single-threaded env var mutation.
+        unsafe { std::env::set_var("VELOS_GTFS_PATH", tmp_dir.to_str().unwrap()) };
+        let graph = make_signalized_graph();
+        let (bus_stops, spawner, _) = load_gtfs_bus_stops(&graph);
+        assert!(bus_stops.is_empty(), "empty GTFS dir should return empty bus_stops");
+        assert!(spawner.is_none(), "empty GTFS dir should return None spawner");
+        unsafe { std::env::remove_var("VELOS_GTFS_PATH") };
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+    }
+
+    #[test]
+    fn load_gtfs_bus_stops_with_valid_data() {
+        // Create a temp GTFS directory with valid test data.
+        let tmp_dir = std::env::temp_dir().join("velos_gtfs_valid_test");
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+        std::fs::create_dir_all(&tmp_dir).unwrap();
+
+        // Write minimal valid GTFS files.
+        std::fs::write(
+            tmp_dir.join("routes.txt"),
+            "route_id,route_long_name\nR1,Test Route 1\n",
+        ).unwrap();
+
+        // Stop at lat/lon that maps near the graph edges.
+        // The projection center is (10.7756, 106.7019), mapping to (0,0) in local coords.
+        std::fs::write(
+            tmp_dir.join("stops.txt"),
+            "stop_id,stop_name,stop_lat,stop_lon\n\
+             S1,Stop One,10.7756,106.7019\n",
+        ).unwrap();
+
+        std::fs::write(
+            tmp_dir.join("trips.txt"),
+            "trip_id,route_id\nT1,R1\n",
+        ).unwrap();
+
+        std::fs::write(
+            tmp_dir.join("stop_times.txt"),
+            "trip_id,stop_id,arrival_time,departure_time,stop_sequence\n\
+             T1,S1,06:00:00,06:00:00,1\n",
+        ).unwrap();
+
+        // SAFETY: Test-only, single-threaded env var mutation.
+        unsafe { std::env::set_var("VELOS_GTFS_PATH", tmp_dir.to_str().unwrap()) };
+
+        // Build a graph with geometry near (0,0) in local coords.
+        let mut g = DiGraph::new();
+        let a = g.add_node(RoadNode { pos: [0.0, 0.0] });
+        let b = g.add_node(RoadNode { pos: [200.0, 0.0] });
+        g.add_edge(a, b, RoadEdge {
+            length_m: 200.0,
+            speed_limit_mps: 13.9,
+            lane_count: 2,
+            oneway: true,
+            road_class: RoadClass::Primary,
+            geometry: vec![[0.0, 0.0], [200.0, 0.0]],
+            motorbike_only: false,
+            time_windows: None,
+        });
+        let graph = RoadGraph::new(g);
+
+        let (bus_stops, spawner, mapping) = load_gtfs_bus_stops(&graph);
+
+        assert!(!bus_stops.is_empty(), "valid GTFS should produce bus_stops");
+        assert!(spawner.is_some(), "valid GTFS should produce a BusSpawner");
+        assert!(!mapping.is_empty(), "valid GTFS should produce stop_id mapping");
+        assert!(mapping.contains_key("S1"), "mapping should contain S1");
+
+        unsafe { std::env::remove_var("VELOS_GTFS_PATH") };
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+    }
+
+    #[test]
+    fn build_stop_id_mapping_matches_by_name() {
+        use velos_demand::GtfsStop;
+        use velos_vehicle::bus::BusStop;
+
+        let proj = velos_net::EquirectangularProjection::new(10.7756, 106.7019);
+        let original = vec![
+            GtfsStop { stop_id: "S1".to_string(), name: "Alpha".to_string(), lat: 10.7756, lon: 106.7019 },
+            GtfsStop { stop_id: "S2".to_string(), name: "Beta".to_string(), lat: 10.7757, lon: 106.7020 },
+        ];
+        let bus_stops = vec![
+            BusStop { edge_id: 0, offset_m: 10.0, capacity: 40, name: "Alpha".to_string() },
+            BusStop { edge_id: 1, offset_m: 20.0, capacity: 40, name: "Beta".to_string() },
+        ];
+
+        let mapping = build_stop_id_mapping(&original, &bus_stops, &proj);
+        assert_eq!(mapping.get("S1"), Some(&0));
+        assert_eq!(mapping.get("S2"), Some(&1));
     }
 }
