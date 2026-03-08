@@ -3,7 +3,7 @@
 ## Milestones
 
 - Shipped **v1.0 MVP** -- Phases 1-4 (shipped 2026-03-07)
-- Active **v1.1 SUMO Replacement Engine** -- Phases 5-15 (in progress)
+- Shipped **v1.1 SUMO Replacement Engine** -- Phases 5-15 (shipped 2026-03-08)
 
 ## Phases
 
@@ -178,7 +178,7 @@ Phases 5 through 8 execute sequentially. Each phase depends on the prior phase.
 | 12. CPU Lane-Change, Prediction Loop & GPU Config | v1.1 | 2/2 | Complete | 2026-03-08 |
 | 13. Final Integration Wiring & GPU Transfer Audit | v1.1 | 3/3 | Complete | 2026-03-08 |
 | 14. Wire GTFS → Bus Stops Pipeline | v1.1 | 2/2 | Complete | 2026-03-08 |
-| 15. File Size Reduction & Housekeeping | 2/2 | Complete   | 2026-03-08 | - |
+| 15. File Size Reduction & Housekeeping | v1.1 | 3/3 | Complete | 2026-03-08 |
 
 ### Phase 12: CPU Lane-Change, Prediction Loop & GPU Config
 **Goal**: MOBIL lane-change overtaking and motorbike lateral filtering wired into GPU tick loop, PredictionService::update() runs every 60 sim-seconds in the frame loop so prediction overlay refreshes live, and HCMC creep/gap behavior constants propagate from TOML config to GPU uniform buffer — closing the last 2 partial requirements and 2 integration gaps from the v1.1 audit
@@ -242,7 +242,8 @@ Plans:
   3. REQUIREMENTS.md footer matches actual coverage (45/45 complete, 0 pending)
   4. ROADMAP.md Phase 5 and Phase 9 checkboxes reflect completed status
   5. Phase 13 VALIDATION.md is compliant (not draft)
-**Plans:** 2/2 plans complete
+**Plans:** 3/3 plans complete
 Plans:
-- [ ] 15-01-PLAN.md — Split sim.rs and compute.rs below 700-line convention
+- [x] 15-01-PLAN.md — Split sim.rs and compute.rs below 700-line convention
 - [x] 15-02-PLAN.md — Fix stale tracking docs and finalize Phase 13 validation
+- [x] 15-03-PLAN.md — Gap closure: fix Phase 15 self-tracking in ROADMAP.md and finalize VALIDATION.md
