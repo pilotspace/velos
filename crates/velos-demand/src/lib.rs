@@ -4,6 +4,7 @@
 //! Combines Origin-Destination matrices with time-of-day scaling profiles to
 //! produce realistic traffic patterns for HCMC District 1 POC.
 
+pub mod bus_spawner;
 pub mod error;
 pub mod gtfs;
 pub mod od_matrix;
@@ -11,6 +12,7 @@ pub mod profile;
 pub mod spawner;
 pub mod tod_profile;
 
+pub use bus_spawner::{BusSpawnRequest, BusSpawner};
 pub use error::DemandError;
 pub use gtfs::{load_gtfs_csv, BusRoute, BusSchedule, GtfsStop};
 pub use od_matrix::{NamedZone, OdMatrix, Zone};
