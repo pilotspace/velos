@@ -677,9 +677,14 @@ impl ComputeDispatcher {
 
 /// Compute agent flags bitfield from vehicle state.
 ///
-/// Combines FLAG_BUS_DWELLING (bit 0) and FLAG_EMERGENCY_ACTIVE (bit 1).
+/// Combines FLAG_BUS_DWELLING (bit 0), FLAG_EMERGENCY_ACTIVE (bit 1),
+/// and agent profile ID (bits 4-7) via `encode_profile_in_flags`.
 /// Used by `step_vehicles_gpu()` when building GpuAgentState.
-pub fn compute_agent_flags(is_bus_dwelling: bool, is_emergency: bool) -> u32 {
+pub fn compute_agent_flags(
+    is_bus_dwelling: bool,
+    is_emergency: bool,
+    profile: velos_core::cost::AgentProfile,
+) -> u32 {
     let mut f = 0u32;
     if is_bus_dwelling {
         f |= 1; // FLAG_BUS_DWELLING
@@ -687,7 +692,7 @@ pub fn compute_agent_flags(is_bus_dwelling: bool, is_emergency: bool) -> u32 {
     if is_emergency {
         f |= 2; // FLAG_EMERGENCY_ACTIVE
     }
-    f
+    velos_core::cost::encode_profile_in_flags(f, profile)
 }
 
 /// Helper to create a bind group layout entry.
@@ -1012,8 +1017,13 @@ mod tests {
 
     /// Compute flags bitfield matching the logic in step_vehicles_gpu().
     /// Extracted as a pure function for testability.
+    /// Uses Commuter profile as default for backward-compatible flag tests.
     fn compute_agent_flags(is_bus_dwelling: bool, is_emergency: bool) -> u32 {
-        crate::compute::compute_agent_flags(is_bus_dwelling, is_emergency)
+        crate::compute::compute_agent_flags(
+            is_bus_dwelling,
+            is_emergency,
+            velos_core::cost::AgentProfile::Commuter,
+        )
     }
 
     #[test]
@@ -1064,5 +1074,46 @@ mod tests {
     fn gpu_emergency_vehicle_layout() {
         // Verify GpuEmergencyVehicle is 16 bytes (4 x f32) for correct GPU alignment
         assert_eq!(std::mem::size_of::<GpuEmergencyVehicle>(), 16);
+    }
+
+    #[test]
+    fn compute_flags_with_tourist_profile_encodes_bits_4_7() {
+        use velos_core::cost::AgentProfile;
+
+        let flags = crate::compute::compute_agent_flags(false, false, AgentProfile::Tourist);
+        // Tourist = 4, encoded in bits 4-7 => 0x40
+        assert_eq!((flags >> 4) & 0x0F, 4, "Profile bits 4-7 should encode Tourist (4)");
+        assert_eq!(flags & 0x0F, 0, "Low bits should be 0 (no dwelling, no emergency)");
+    }
+
+    #[test]
+    fn compute_flags_with_profile_preserves_low_bits() {
+        use velos_core::cost::AgentProfile;
+
+        // Bus dwelling + Emergency active + Bus profile
+        let flags = crate::compute::compute_agent_flags(true, true, AgentProfile::Bus);
+        assert_eq!(flags & 0x01, 1, "FLAG_BUS_DWELLING should be set");
+        assert_eq!(flags & 0x02, 2, "FLAG_EMERGENCY_ACTIVE should be set");
+        assert_eq!((flags >> 4) & 0x0F, 1, "Profile bits should encode Bus (1)");
+    }
+
+    #[test]
+    fn compute_flags_decode_roundtrip_all_profiles() {
+        use velos_core::cost::{AgentProfile, decode_profile_from_flags};
+
+        for profile in [
+            AgentProfile::Commuter,
+            AgentProfile::Bus,
+            AgentProfile::Truck,
+            AgentProfile::Emergency,
+            AgentProfile::Tourist,
+            AgentProfile::Teen,
+            AgentProfile::Senior,
+            AgentProfile::Cyclist,
+        ] {
+            let flags = crate::compute::compute_agent_flags(false, false, profile);
+            let decoded = decode_profile_from_flags(flags);
+            assert_eq!(decoded, profile, "Round-trip failed for {profile:?}");
+        }
     }
 }

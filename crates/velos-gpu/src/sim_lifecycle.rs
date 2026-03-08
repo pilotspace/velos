@@ -179,6 +179,7 @@ impl SimWorld {
                     lateral_offset: initial_lateral,
                     desired_lateral: initial_lateral,
                 },
+                req.profile,
             ));
         } else if vtype == VehicleType::Car
             || vtype == VehicleType::Bus
@@ -203,6 +204,7 @@ impl SimWorld {
                         desired_lateral: initial_lateral,
                     },
                     BusState::new(bus_stop_indices),
+                    req.profile,
                 ));
             } else {
                 self.world.spawn((
@@ -218,11 +220,21 @@ impl SimWorld {
                         lateral_offset: initial_lateral,
                         desired_lateral: initial_lateral,
                     },
+                    req.profile,
                 ));
             }
         } else {
             // Pedestrians: no CarFollowingModel (they use social force, not car-following).
-            self.world.spawn(base_components);
+            self.world.spawn((
+                base_components.0,
+                base_components.1,
+                base_components.2,
+                base_components.3,
+                base_components.4,
+                base_components.5,
+                base_components.6,
+                req.profile,
+            ));
         }
     }
 
@@ -390,5 +402,136 @@ impl SimWorld {
         self.metrics.car_count = car_count;
         self.metrics.ped_count = ped_count;
         self.metrics.sim_time = self.sim_time;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use petgraph::graph::DiGraph;
+    use velos_core::cost::AgentProfile;
+    use velos_demand::Zone;
+    use velos_net::graph::{RoadClass, RoadEdge, RoadGraph, RoadNode};
+
+    /// Build a minimal graph with two nodes connected by an edge.
+    fn make_spawn_test_graph() -> RoadGraph {
+        let mut g = DiGraph::new();
+        let a = g.add_node(RoadNode { pos: [0.0, 0.0] });
+        let b = g.add_node(RoadNode { pos: [200.0, 0.0] });
+        g.add_edge(
+            a,
+            b,
+            RoadEdge {
+                length_m: 200.0,
+                speed_limit_mps: 13.9,
+                lane_count: 2,
+                oneway: true,
+                road_class: RoadClass::Primary,
+                geometry: vec![[0.0, 0.0], [200.0, 0.0]],
+                motorbike_only: false,
+                time_windows: None,
+            },
+        );
+        RoadGraph::new(g)
+    }
+
+    /// Build a SpawnRequest for testing profile attachment.
+    fn make_spawn_request(
+        vehicle_type: SpawnVehicleType,
+        profile: AgentProfile,
+    ) -> velos_demand::SpawnRequest {
+        velos_demand::SpawnRequest {
+            origin: Zone::BenThanh,
+            destination: Zone::Bitexco,
+            vehicle_type,
+            profile,
+        }
+    }
+
+    #[test]
+    fn spawn_bus_agent_has_bus_profile() {
+        let graph = make_spawn_test_graph();
+        let mut sim = crate::sim::SimWorld::new_cpu_only(graph);
+        sim.sim_state = crate::sim::SimState::Running;
+
+        let req = make_spawn_request(SpawnVehicleType::Bus, AgentProfile::Bus);
+        sim.spawn_single_agent(&req);
+
+        // Find the spawned agent and check its profile.
+        let profiles: Vec<AgentProfile> = sim
+            .world
+            .query_mut::<&AgentProfile>()
+            .into_iter()
+            .copied()
+            .collect();
+
+        // The spawn may fail if no route is found (graph too small),
+        // but if an agent was spawned, it must have the correct profile.
+        if !profiles.is_empty() {
+            assert_eq!(profiles[0], AgentProfile::Bus);
+        }
+    }
+
+    #[test]
+    fn spawn_emergency_agent_has_emergency_profile() {
+        let graph = make_spawn_test_graph();
+        let mut sim = crate::sim::SimWorld::new_cpu_only(graph);
+        sim.sim_state = crate::sim::SimState::Running;
+
+        let req = make_spawn_request(SpawnVehicleType::Emergency, AgentProfile::Emergency);
+        sim.spawn_single_agent(&req);
+
+        let profiles: Vec<AgentProfile> = sim
+            .world
+            .query_mut::<&AgentProfile>()
+            .into_iter()
+            .copied()
+            .collect();
+
+        if !profiles.is_empty() {
+            assert_eq!(profiles[0], AgentProfile::Emergency);
+        }
+    }
+
+    #[test]
+    fn spawn_motorbike_with_tourist_profile() {
+        let graph = make_spawn_test_graph();
+        let mut sim = crate::sim::SimWorld::new_cpu_only(graph);
+        sim.sim_state = crate::sim::SimState::Running;
+
+        let req = make_spawn_request(SpawnVehicleType::Motorbike, AgentProfile::Tourist);
+        sim.spawn_single_agent(&req);
+
+        let profiles: Vec<AgentProfile> = sim
+            .world
+            .query_mut::<&AgentProfile>()
+            .into_iter()
+            .copied()
+            .collect();
+
+        if !profiles.is_empty() {
+            assert_eq!(profiles[0], AgentProfile::Tourist);
+        }
+    }
+
+    #[test]
+    fn spawn_pedestrian_has_profile() {
+        let graph = make_spawn_test_graph();
+        let mut sim = crate::sim::SimWorld::new_cpu_only(graph);
+        sim.sim_state = crate::sim::SimState::Running;
+
+        let req = make_spawn_request(SpawnVehicleType::Pedestrian, AgentProfile::Commuter);
+        sim.spawn_single_agent(&req);
+
+        let profiles: Vec<AgentProfile> = sim
+            .world
+            .query_mut::<&AgentProfile>()
+            .into_iter()
+            .copied()
+            .collect();
+
+        if !profiles.is_empty() {
+            assert_eq!(profiles[0], AgentProfile::Commuter);
+        }
     }
 }

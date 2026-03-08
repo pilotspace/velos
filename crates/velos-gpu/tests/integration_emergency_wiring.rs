@@ -10,6 +10,7 @@ use velos_core::components::{
     VehicleType,
 };
 use velos_core::fixed_point::{FixLat, FixPos, FixSpd};
+use velos_core::cost::AgentProfile;
 use velos_gpu::compute::{compute_agent_flags, GpuEmergencyVehicle};
 
 /// Build a GpuAgentState from ECS components, mirroring step_vehicles_gpu() logic.
@@ -45,7 +46,7 @@ fn build_gpu_agent(
         cf_model: CarFollowingModel::Idm as u32,
         rng_state: 0,
         vehicle_type: vtype_gpu,
-        flags: compute_agent_flags(is_dwelling, is_emergency),
+        flags: compute_agent_flags(is_dwelling, is_emergency, AgentProfile::Commuter),
     }
 }
 

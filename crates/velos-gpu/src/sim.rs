@@ -32,6 +32,7 @@ use velos_vehicle::config::VehicleConfig;
 use velos_vehicle::social_force::SocialForceParams;
 use velos_vehicle::sublane::SublaneParams;
 
+use crate::ped_adaptive::PedestrianAdaptivePipeline;
 use crate::sim_meso::MesoAgentState;
 
 use crate::compute::{sort_agents_by_lane, ComputeDispatcher};
@@ -147,6 +148,8 @@ pub struct SimWorld {
     pub meso_queues: HashMap<u32, SpatialQueue>,
     /// Preserved agent state during meso transit (keyed by vehicle ID).
     pub meso_agent_states: HashMap<u32, MesoAgentState>,
+    /// GPU pedestrian adaptive pipeline. None in CPU-only test paths.
+    pub(crate) ped_adaptive: Option<PedestrianAdaptivePipeline>,
 }
 
 impl SimWorld {
@@ -209,6 +212,9 @@ impl SimWorld {
         });
         dispatcher.set_perception_result_buffer(perc_result_buffer);
 
+        // Create pedestrian adaptive GPU pipeline.
+        let ped_adaptive = PedestrianAdaptivePipeline::new(device);
+
         // Pre-allocate perception auxiliary buffers.
         let edge_count = road_graph.edge_count() as u32;
         let perception_buffers = PerceptionBuffers::new(device, edge_count);
@@ -240,6 +246,7 @@ impl SimWorld {
             zone_config: sim_startup::load_zone_config(),
             meso_queues: HashMap::new(),
             meso_agent_states: HashMap::new(),
+            ped_adaptive: Some(ped_adaptive),
         };
 
         // Initialize reroute subsystem (builds CCH, prediction service).
@@ -295,6 +302,7 @@ impl SimWorld {
             zone_config: sim_startup::load_zone_config(),
             meso_queues: HashMap::new(),
             meso_agent_states: HashMap::new(),
+            ped_adaptive: None,
         }
     }
 
@@ -414,8 +422,8 @@ impl SimWorld {
         self.step_lane_changes(dt);
 
         // 7. GPU wave-front car-following physics
-        let snapshot = AgentSnapshot::collect(&self.world);
-        let spatial = SpatialIndex::from_positions(&snapshot.ids, &snapshot.positions);
+        let _snapshot = AgentSnapshot::collect(&self.world);
+        let _spatial = SpatialIndex::from_positions(&_snapshot.ids, &_snapshot.positions);
 
         self.step_vehicles_gpu(dt as f32, device, queue, dispatcher);
 
@@ -436,8 +444,8 @@ impl SimWorld {
         // 8.5. Prediction overlay refresh (every 60 sim-seconds)
         self.step_prediction();
 
-        // 9. Pedestrians
-        self.step_pedestrians(dt, &spatial, &snapshot);
+        // 9. Pedestrians (GPU adaptive pipeline)
+        self.step_pedestrians_gpu(dt, device, queue);
 
         // 9-10. Gridlock detection, cleanup, metrics
         self.detect_gridlock();
@@ -646,12 +654,13 @@ impl SimWorld {
         dispatcher: &mut ComputeDispatcher,
     ) {
         use crate::compute::{compute_agent_flags, GpuEmergencyVehicle};
+        use velos_core::cost::AgentProfile;
 
         let mut gpu_agents: Vec<GpuAgentState> = Vec::new();
         let mut entity_map: Vec<Entity> = Vec::new();
         let mut emergency_list: Vec<GpuEmergencyVehicle> = Vec::new();
 
-        for (entity, rp, kin, vtype, lat, cf_model, bus_state, pos) in self
+        for (entity, rp, kin, vtype, lat, cf_model, bus_state, pos, agent_profile) in self
             .world
             .query_mut::<(
                 Entity,
@@ -662,6 +671,7 @@ impl SimWorld {
                 Option<&CarFollowingModel>,
                 Option<&velos_vehicle::bus::BusState>,
                 &Position,
+                Option<&AgentProfile>,
             )>()
             .into_iter()
         {
@@ -671,6 +681,7 @@ impl SimWorld {
 
             let cf = cf_model.copied().unwrap_or(CarFollowingModel::Idm);
             let rng_seed = entity.id();
+            let profile = agent_profile.copied().unwrap_or(AgentProfile::Commuter);
 
             let vtype_gpu = match *vtype {
                 VehicleType::Motorbike => 0,
@@ -695,7 +706,7 @@ impl SimWorld {
                 cf_model: cf as u32,
                 rng_state: rng_seed,
                 vehicle_type: vtype_gpu,
-                flags: compute_agent_flags(is_dwelling, is_emergency),
+                flags: compute_agent_flags(is_dwelling, is_emergency, profile),
             });
             entity_map.push(entity);
 
