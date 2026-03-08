@@ -70,9 +70,9 @@ Prove VELOS can replace SUMO: reimplement all core SUMO features, add agent inte
 
 ### HCMC Behavior Tuning
 
-- [ ] **TUN-01**: All ~50 vehicle behavior parameters externalized to TOML config file (data/hcmc/vehicle_params.toml) with per-vehicle-type sections
+- [x] **TUN-01**: All ~50 vehicle behavior parameters externalized to TOML config file (data/hcmc/vehicle_params.toml) with per-vehicle-type sections
 - [ ] **TUN-02**: GPU/CPU parameter parity -- GPU shader reads vehicle-type parameters from uniform buffer populated from config, eliminating hardcoded WGSL constants
-- [ ] **TUN-03**: HCMC-calibrated parameter defaults for all vehicle types (motorbike v0=35-45 km/h, car v0=30-40 km/h, truck v0=30-40 km/h not 90 km/h)
+- [x] **TUN-03**: HCMC-calibrated parameter defaults for all vehicle types (motorbike v0=35-45 km/h, car v0=30-40 km/h, truck v0=30-40 km/h not 90 km/h)
 - [ ] **TUN-04**: Red-light creep behavior -- motorbikes inch past stop line during red, forming dense swarm ahead of cars
 - [ ] **TUN-05**: Aggressive weaving -- speed-dependent lateral filter gap (0.5m base + 0.1*delta_v) for motorbike squeeze-through
 - [ ] **TUN-06**: Yield-based intersection negotiation -- vehicle-type-dependent TTC gap acceptance with size intimidation and deadlock prevention

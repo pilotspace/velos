@@ -3,11 +3,11 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: SUMO Replacement Engine
 status: completed
-stopped_at: Completed 07-06-PLAN.md
-last_updated: "2026-03-07T16:39:23.493Z"
-last_activity: 2026-03-07 -- Completed Plan 07-06 (Reroute evaluation & scheduling)
+stopped_at: Completed 08-01-PLAN.md
+last_updated: "2026-03-08T03:56:56Z"
+last_activity: 2026-03-08 -- Completed Plan 08-01 (Vehicle config TOML infrastructure)
 progress:
-  total_phases: 3
+  total_phases: 4
   completed_phases: 3
   total_plans: 19
   completed_plans: 19
@@ -25,12 +25,12 @@ See: .planning/PROJECT.md (updated 2026-03-07)
 
 ## Current Position
 
-Phase: 7 of 7 (Intelligence, Routing & Prediction) -- IN PROGRESS
-Plan: 06 of 06 complete -- CPU reroute scheduler with staggered evaluation
-Status: Plan 07-06 complete
-Last activity: 2026-03-07 -- Completed Plan 07-06 (Reroute evaluation & scheduling)
+Phase: 8 of 8 (Tuning Vehicle Behavior to More Realistic in HCM) -- IN PROGRESS
+Plan: 01 of 03 complete -- Vehicle config infrastructure with HCMC-calibrated defaults
+Status: Plan 08-01 complete
+Last activity: 2026-03-08 -- Completed Plan 08-01 (Vehicle config TOML infrastructure)
 
-Progress: [██████████] 100%
+Progress: [███-------] 33%
 
 ## Accumulated Context
 
@@ -111,10 +111,19 @@ Recent decisions affecting current work:
 - [07-06]: RouteEvalContext struct decouples evaluate_reroute from CCH/ECS for pure-logic testability
 - [07-06]: EdgeNodeMap separate from CCHRouter (CCH topology is graph-independent)
 - [07-06]: sim_reroute.rs follows existing SimWorld split pattern for file size compliance
+- [08-01]: Truck v0 changed from 25.0 m/s (90 km/h) to 9.7 m/s (35 km/h) for HCMC urban
+- [08-01]: Car v0 changed from 13.9 m/s (50 km/h) to 9.7 m/s (35 km/h) for HCMC congestion
+- [08-01]: Motorbike t_headway reduced from 1.0s to 0.8s for aggressive HCMC following
+- [08-01]: VehicleConfig::default() hardcoded fallback matches TOML file for resilience
+- [08-01]: SublaneParams default min_filter_gap 0.6->0.5m, max_lateral_speed 1.0->1.2 m/s
 
 ### Pending Todos
 
 None.
+
+### Roadmap Evolution
+
+- Phase 8 added: tuning vehicle behavior to more realistic in HCM
 
 ### Blockers/Concerns
 
@@ -125,6 +134,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-07T16:33:23Z
-Stopped at: Completed 07-06-PLAN.md
-Resume file: Phase 7 complete
+Last session: 2026-03-08T03:56:56Z
+Stopped at: Completed 08-01-PLAN.md
+Resume file: .planning/phases/08-tuning-vehicle-behavior-to-more-realistic-in-hcm/08-02-PLAN.md
