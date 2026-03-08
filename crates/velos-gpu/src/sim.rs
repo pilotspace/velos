@@ -139,13 +139,13 @@ pub struct SimWorld {
     /// Empirical bus dwell time model parameters.
     pub(crate) bus_dwell_model: BusDwellModel,
     /// Whether mesoscopic zone simulation is enabled (default false).
-    pub(crate) meso_enabled: bool,
+    pub meso_enabled: bool,
     /// Zone configuration: maps edge IDs to Micro/Meso/Buffer zones.
-    pub(crate) zone_config: ZoneConfig,
+    pub zone_config: ZoneConfig,
     /// Active SpatialQueues for meso-designated edges (keyed by edge ID).
-    pub(crate) meso_queues: HashMap<u32, SpatialQueue>,
+    pub meso_queues: HashMap<u32, SpatialQueue>,
     /// Preserved agent state during meso transit (keyed by vehicle ID).
-    pub(crate) meso_agent_states: HashMap<u32, MesoAgentState>,
+    pub meso_agent_states: HashMap<u32, MesoAgentState>,
 }
 
 impl SimWorld {
@@ -292,6 +292,35 @@ impl SimWorld {
         self.partition_mode = PartitionMode::Multi(MultiGpuScheduler::new(assignment));
     }
 
+    /// Enable mesoscopic simulation for edges designated in zone_config.
+    ///
+    /// Creates SpatialQueues for all edges with ZoneType::Meso.
+    /// Queue capacity derived from edge length and lane count.
+    pub fn enable_meso(&mut self) {
+        use velos_meso::zone_config::ZoneType;
+
+        let g = self.road_graph.inner();
+        let mut queue_count = 0u32;
+
+        for edge_idx in g.edge_indices() {
+            let edge_id = edge_idx.index() as u32;
+            if self.zone_config.zone_type(edge_id) == ZoneType::Meso {
+                let edge = &g[edge_idx];
+                let t_free = edge.length_m / edge.speed_limit_mps.max(1.0);
+                let capacity = (edge.length_m / 7.0) * edge.lane_count as f64;
+                self.meso_queues
+                    .insert(edge_id, SpatialQueue::new(t_free, capacity.max(1.0)));
+                queue_count += 1;
+            }
+        }
+
+        self.meso_enabled = true;
+        log::info!(
+            "Meso simulation enabled: {} SpatialQueues created for meso edges",
+            queue_count
+        );
+    }
+
     pub fn reset(&mut self) {
         self.world.clear();
         self.sim_time = Self::MORNING_RUSH_SECS;
@@ -357,6 +386,9 @@ impl SimWorld {
         // 6. Reroute evaluation using perception results
         self.step_reroute(&perception_results);
 
+        // 6.5. Meso queue tick + buffer zone insertion (BEFORE micro physics)
+        self.step_meso(dt);
+
         // 7-8. Vehicle and pedestrian physics
         let snapshot = AgentSnapshot::collect(&self.world);
         let spatial = SpatialIndex::from_positions(&snapshot.ids, &snapshot.positions);
@@ -395,6 +427,9 @@ impl SimWorld {
         self.step_signal_priority();
 
         // No perception/reroute in CPU path (requires GPU device)
+
+        // Meso queue tick + buffer zone insertion (BEFORE micro physics)
+        self.step_meso(dt);
 
         let snapshot = AgentSnapshot::collect(&self.world);
         let spatial = SpatialIndex::from_positions(&snapshot.ids, &snapshot.positions);

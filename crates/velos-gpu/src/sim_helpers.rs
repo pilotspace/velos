@@ -8,11 +8,16 @@ use petgraph::visit::EdgeRef;
 use petgraph::Direction;
 
 use velos_core::components::{
-    Kinematics, LaneChangeState, Position, RoadPosition, Route, WaitState,
+    CarFollowingModel, Kinematics, LaneChangeState, LateralOffset, Position, RoadPosition, Route,
+    VehicleType, WaitState,
 };
+use velos_meso::queue_model::MesoVehicle;
+use velos_meso::zone_config::ZoneType;
 use velos_signal::plan::PhaseState;
+use velos_vehicle::idm::IdmParams;
 
 use crate::sim::SimWorld;
+use crate::sim_meso::MesoAgentState;
 
 impl SimWorld {
     pub(crate) fn check_signal_red(&self, rp: &RoadPosition) -> bool {
@@ -146,13 +151,21 @@ impl SimWorld {
         };
 
         match next_info {
-            Some((Some(edge_idx), new_step)) => {
+            Some((Some(next_edge_id), new_step)) => {
+                // Check for micro-to-meso transition.
+                if self.meso_enabled
+                    && self.zone_config.zone_type(next_edge_id) == ZoneType::Meso
+                {
+                    self.enter_meso_zone(entity, next_edge_id, new_step);
+                    return;
+                }
+
                 let (route, rp) = self
                     .world
                     .query_one_mut::<(&mut Route, &mut RoadPosition)>(entity)
                     .unwrap();
                 route.current_step = new_step;
-                rp.edge_index = edge_idx;
+                rp.edge_index = next_edge_id;
                 rp.offset_m = overflow;
                 rp.lane = 0; // reset lane on new edge
                 // Cancel any in-progress car lane change on edge transition.
@@ -280,5 +293,75 @@ impl SimWorld {
         } else {
             ws.stopped_since = -1.0;
         }
+    }
+
+    /// Transfer an agent from micro simulation into a meso SpatialQueue.
+    ///
+    /// Preserves agent identity (Route, VehicleType, IdmParams, etc.) in
+    /// MesoAgentState for reconstruction on meso exit. The ECS entity is
+    /// despawned by marking the route as complete (triggers remove_finished_agents).
+    fn enter_meso_zone(&mut self, entity: Entity, meso_edge_id: u32, step_at_meso: usize) {
+        // Extract agent state before despawning.
+        let agent_state = {
+            let Ok((route, vtype, idm, cf_model, lat)) = self.world.query_one_mut::<(
+                &Route,
+                &VehicleType,
+                &IdmParams,
+                Option<&CarFollowingModel>,
+                Option<&LateralOffset>,
+            )>(entity)
+            else {
+                return;
+            };
+
+            let mut preserved_route = route.clone();
+            preserved_route.current_step = step_at_meso;
+
+            MesoAgentState {
+                route: preserved_route,
+                vehicle_type: *vtype,
+                idm_params: *idm,
+                cf_model: cf_model.copied().unwrap_or(CarFollowingModel::Idm),
+                lateral_offset: lat.map(|l| l.lateral_offset),
+            }
+        };
+
+        let vehicle_id = entity.id();
+
+        // Determine exit edge (next edge after meso edge in route).
+        let exit_edge = {
+            let route = &agent_state.route;
+            if route.current_step + 1 < route.path.len() {
+                let from = NodeIndex::new(route.path[route.current_step] as usize);
+                let to = NodeIndex::new(route.path[route.current_step + 1] as usize);
+                self.road_graph
+                    .inner()
+                    .find_edge(from, to)
+                    .map(|e| e.index() as u32)
+                    .unwrap_or(0)
+            } else {
+                0 // Last edge in route; will be handled on meso exit
+            }
+        };
+
+        // Insert into SpatialQueue.
+        if let Some(queue) = self.meso_queues.get_mut(&meso_edge_id) {
+            let meso_vehicle = MesoVehicle::new(vehicle_id, self.sim_time, exit_edge);
+            queue.enter(meso_vehicle);
+        }
+
+        // Preserve state for reconstruction on meso exit.
+        self.meso_agent_states.insert(vehicle_id, agent_state);
+
+        // Mark route as complete to trigger despawn in remove_finished_agents().
+        if let Ok(route) = self.world.query_one_mut::<&mut Route>(entity) {
+            route.current_step = route.path.len();
+        }
+
+        log::debug!(
+            "Agent {} entering meso zone on edge {}",
+            vehicle_id,
+            meso_edge_id
+        );
     }
 }

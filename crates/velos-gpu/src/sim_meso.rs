@@ -4,9 +4,6 @@
 //! edges and handles meso-micro zone transitions with velocity matching.
 //! Follows sim_bus.rs pattern: extracted to its own module for 700-line compliance.
 
-use std::collections::HashMap;
-
-use hecs::Entity;
 use petgraph::graph::EdgeIndex;
 
 use velos_core::components::{
@@ -14,8 +11,7 @@ use velos_core::components::{
     WaitState,
 };
 use velos_meso::buffer_zone::velocity_matching_speed;
-use velos_meso::queue_model::{MesoVehicle, SpatialQueue};
-use velos_meso::zone_config::ZoneType;
+use velos_meso::queue_model::MesoVehicle;
 use velos_vehicle::idm::IdmParams;
 
 use crate::sim::SimWorld;
@@ -26,7 +22,7 @@ use crate::sim::SimWorld;
 /// identity is preserved here. On meso exit, a new ECS entity is spawned
 /// with these fields restored -- no identity loss across zone transitions.
 #[derive(Debug, Clone)]
-pub(crate) struct MesoAgentState {
+pub struct MesoAgentState {
     pub route: Route,
     pub vehicle_type: VehicleType,
     pub idm_params: IdmParams,
@@ -44,7 +40,7 @@ impl SimWorld {
     /// 1. try_exit() on each SpatialQueue to find agents ready to leave meso
     /// 2. For each exiting agent, spawn into micro simulation via spawn_from_meso()
     /// 3. Micro-to-meso entry handled separately in advance_to_next_edge()
-    pub(crate) fn step_meso(&mut self, _dt: f64) {
+    pub fn step_meso(&mut self, _dt: f64) {
         if !self.meso_enabled {
             return;
         }
@@ -205,7 +201,7 @@ impl SimWorld {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use velos_meso::zone_config::ZoneConfig;
+    use velos_meso::zone_config::{ZoneConfig, ZoneType};
 
     #[test]
     fn meso_agent_state_preserves_identity() {
