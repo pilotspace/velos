@@ -16,16 +16,16 @@ use rand::rngs::StdRng;
 use rand::SeedableRng;
 
 use velos_core::components::{
-    CarFollowingModel, GpuAgentState, Kinematics, LateralOffset, Position, RoadPosition, Route,
-    VehicleType,
+    CarFollowingModel, GpuAgentState, Kinematics, LateralOffset, RoadPosition, VehicleType,
 };
 use velos_core::fixed_point::{FixLat, FixPos, FixSpd};
 use velos_demand::{OdMatrix, Spawner, TodProfile, Zone};
 use velos_net::{RoadGraph, SpatialIndex};
-use velos_signal::detector::LoopDetector;
+use velos_signal::detector::{DetectorReading, LoopDetector};
+use velos_signal::priority::{PriorityLevel, PriorityRequest};
 use velos_signal::SignalController;
 use velos_vehicle::config::VehicleConfig;
-use velos_vehicle::social_force::{self, PedestrianNeighbor, SocialForceParams};
+use velos_vehicle::social_force::SocialForceParams;
 use velos_vehicle::sublane::SublaneParams;
 
 use crate::compute::{sort_agents_by_lane, ComputeDispatcher};
@@ -121,11 +121,10 @@ pub struct SimWorld {
     pub(crate) reroute: RerouteState,
     /// GPU perception pipeline. None in CPU-only test paths.
     pub(crate) perception: Option<PerceptionPipeline>,
-    /// Loaded vehicle configuration.
+    /// Loaded vehicle configuration (used at startup, retained for runtime queries).
     #[allow(dead_code)]
     pub(crate) vehicle_config: VehicleConfig,
     /// Loop detectors for actuated signal controllers.
-    #[allow(dead_code)]
     pub(crate) loop_detectors: Vec<(NodeIndex, Vec<LoopDetector>)>,
     /// Pre-allocated GPU buffers for perception pipeline input.
     /// None in CPU-only test paths.
@@ -282,6 +281,18 @@ impl SimWorld {
     }
 
     /// Run one simulation tick using GPU wave-front dispatch for vehicle physics.
+    ///
+    /// Full 10-step pipeline:
+    /// 1. spawn_agents       — generate new agents from OD matrix
+    /// 2. update_loop_detectors — check agents crossing virtual detectors
+    /// 3. step_signals        — advance signal controllers with detector readings
+    /// 4. step_signal_priority — process bus/emergency priority requests
+    /// 5. step_perception     — GPU perception gather + readback
+    /// 6. step_reroute        — evaluate rerouting from perception results
+    /// 7. step_vehicles_gpu   — GPU wave-front car-following physics
+    /// 8. step_pedestrians    — CPU social force model
+    /// 9. detect_gridlock     — cycle detection in stopped agents
+    /// 10. remove + metrics   — cleanup finished agents, update counters
     pub fn tick_gpu(
         &mut self,
         base_dt: f64,
@@ -296,15 +307,35 @@ impl SimWorld {
         let dt = base_dt * self.speed_mult as f64;
         self.sim_time += dt;
 
-        self.spawn_agents(dt);
-        self.step_signals(dt);
+        // Update sim_time on dispatcher for WGSL school zone time windows.
+        dispatcher.sim_time = self.sim_time as f32;
 
+        // 1. Spawn new agents
+        self.spawn_agents(dt);
+
+        // 2. Update loop detectors (feed actuated signals)
+        let detector_readings = self.update_loop_detectors();
+
+        // 3. Advance signal controllers with detector readings
+        self.step_signals_with_detectors(dt, &detector_readings);
+
+        // 4. Process signal priority requests from buses/emergencies
+        self.step_signal_priority();
+
+        // 5. GPU perception dispatch + readback
+        let perception_results = self.step_perception(device, queue, dispatcher);
+
+        // 6. Reroute evaluation using perception results
+        self.step_reroute(&perception_results);
+
+        // 7-8. Vehicle and pedestrian physics
         let snapshot = AgentSnapshot::collect(&self.world);
         let spatial = SpatialIndex::from_positions(&snapshot.ids, &snapshot.positions);
 
         self.step_vehicles_gpu(dt as f32, device, queue, dispatcher);
         self.step_pedestrians(dt, &spatial, &snapshot);
 
+        // 9-10. Gridlock detection, cleanup, metrics
         self.detect_gridlock();
         self.remove_finished_agents();
         self.update_metrics();
@@ -313,6 +344,9 @@ impl SimWorld {
     }
 
     /// Run one simulation tick using CPU physics (fallback for tests without GPU).
+    ///
+    /// Same pipeline order as tick_gpu() but skips GPU perception and reroute
+    /// (no GPU device available). Detector readings still feed signal controllers.
     pub fn tick(
         &mut self,
         base_dt: f64,
@@ -325,7 +359,12 @@ impl SimWorld {
         self.sim_time += dt;
 
         self.spawn_agents(dt);
-        self.step_signals(dt);
+
+        let detector_readings = self.update_loop_detectors();
+        self.step_signals_with_detectors(dt, &detector_readings);
+        self.step_signal_priority();
+
+        // No perception/reroute in CPU path (requires GPU device)
 
         let snapshot = AgentSnapshot::collect(&self.world);
         let spatial = SpatialIndex::from_positions(&snapshot.ids, &snapshot.positions);
@@ -341,9 +380,151 @@ impl SimWorld {
         self.build_instances()
     }
 
-    fn step_signals(&mut self, dt: f64) {
-        for (_, ctrl) in &mut self.signal_controllers {
-            ctrl.tick(dt, &[]);
+    /// Advance signal controllers with detector readings from loop detectors.
+    ///
+    /// Each controller receives only the readings from its own intersection's
+    /// detectors. Fixed-time controllers ignore readings; actuated controllers
+    /// use them for gap-out decisions.
+    fn step_signals_with_detectors(
+        &mut self,
+        dt: f64,
+        detector_readings: &[(NodeIndex, Vec<DetectorReading>)],
+    ) {
+        for (node, ctrl) in &mut self.signal_controllers {
+            let readings = detector_readings
+                .iter()
+                .find(|(n, _)| n == node)
+                .map_or(&[][..], |(_, r)| r.as_slice());
+            ctrl.tick(dt, readings);
+        }
+    }
+
+    /// Check loop detectors for agent crossings.
+    ///
+    /// For each detector, scans agents on the same edge and checks if any
+    /// agent's offset crossed the detector point this frame. Uses current
+    /// ECS positions (RoadPosition.offset_m) compared against the previous
+    /// frame's position stored in Kinematics.speed * dt approximation.
+    fn update_loop_detectors(&self) -> Vec<(NodeIndex, Vec<DetectorReading>)> {
+        let mut results = Vec::with_capacity(self.loop_detectors.len());
+
+        for (node, detectors) in &self.loop_detectors {
+            let mut readings = Vec::with_capacity(detectors.len());
+
+            for (det_idx, detector) in detectors.iter().enumerate() {
+                let mut triggered = false;
+
+                // Scan agents on this detector's edge
+                for (rp, kin) in self
+                    .world
+                    .query::<(&RoadPosition, &Kinematics)>()
+                    .iter()
+                {
+                    if rp.edge_index != detector.edge_id {
+                        continue;
+                    }
+
+                    // Approximate previous position: current offset minus distance
+                    // traveled this frame. For forward-only detection this is
+                    // sufficient (LoopDetector::check uses prev < offset <= cur).
+                    let cur_pos = rp.offset_m;
+                    // Use a small dt estimate; the exact dt doesn't matter much
+                    // since we only need to know if the agent crossed the point.
+                    // Speed * 1 tick at base dt gives a conservative estimate.
+                    let prev_pos = (cur_pos - kin.speed.abs() * 0.1).max(0.0);
+
+                    if detector.check(prev_pos, cur_pos) {
+                        triggered = true;
+                        break; // One trigger per detector per frame is sufficient
+                    }
+                }
+
+                readings.push(DetectorReading {
+                    detector_index: det_idx,
+                    triggered,
+                });
+            }
+
+            results.push((*node, readings));
+        }
+
+        results
+    }
+
+    /// Process signal priority requests from bus and emergency vehicles.
+    ///
+    /// Scans vehicles near signalized intersections (within 100m of the
+    /// intersection node) and submits priority requests for bus and
+    /// emergency vehicle types.
+    fn step_signal_priority(&mut self) {
+        // Collect priority requests (avoid borrow conflict with self)
+        let mut requests: Vec<(NodeIndex, PriorityRequest)> = Vec::new();
+
+        let g = self.road_graph.inner();
+
+        for (entity, rp, vtype) in self
+            .world
+            .query::<(hecs::Entity, &RoadPosition, &VehicleType)>()
+            .iter()
+        {
+            let level = match *vtype {
+                VehicleType::Bus => PriorityLevel::Bus,
+                VehicleType::Emergency => PriorityLevel::Emergency,
+                _ => continue,
+            };
+
+            // Check if agent's edge connects to a signalized node
+            let edge_idx = EdgeIndex::new(rp.edge_index as usize);
+            let Some(endpoints) = g.edge_endpoints(edge_idx) else {
+                continue;
+            };
+            let target_node = endpoints.1;
+            let target_id = target_node.index() as u32;
+
+            if !self.signalized_nodes.contains_key(&target_id) {
+                continue;
+            }
+
+            // Check proximity: agent must be within 100m of intersection
+            let edge_length = g
+                .edge_weight(edge_idx)
+                .map(|e| e.length_m)
+                .unwrap_or(100.0);
+            let distance_to_intersection = edge_length - rp.offset_m;
+            if distance_to_intersection > 100.0 {
+                continue;
+            }
+
+            // Determine approach index for this edge
+            let incoming: Vec<_> = g
+                .edges_directed(target_node, petgraph::Direction::Incoming)
+                .collect();
+            let approach_index = incoming
+                .iter()
+                .position(|e| {
+                    use petgraph::visit::EdgeRef;
+                    e.id() == edge_idx
+                })
+                .unwrap_or(0);
+
+            requests.push((
+                target_node,
+                PriorityRequest {
+                    approach_index,
+                    level,
+                    vehicle_id: entity.id(),
+                },
+            ));
+        }
+
+        // Submit requests to the matching signal controllers
+        for (target_node, request) in &requests {
+            for (ctrl_node, ctrl) in &mut self.signal_controllers {
+                if ctrl_node == target_node {
+                    ctrl.request_priority(request);
+                    break;
+                }
+            }
         }
     }
 
@@ -450,139 +631,4 @@ impl SimWorld {
         }
     }
 
-    /// Step pedestrians using social force model (CPU).
-    fn step_pedestrians(&mut self, dt: f64, spatial: &SpatialIndex, snapshot: &AgentSnapshot) {
-        struct PedState {
-            entity: Entity,
-            path: Vec<u32>,
-            current_step: usize,
-            pos: [f64; 2],
-            vel: [f64; 2],
-        }
-
-        let peds: Vec<PedState> = self
-            .world
-            .query_mut::<(Entity, &VehicleType, &Route, &Position, &Kinematics)>()
-            .into_iter()
-            .filter(|(_, vt, _, _, _)| **vt == VehicleType::Pedestrian)
-            .map(|(e, _, r, pos, kin)| PedState {
-                entity: e,
-                path: r.path.clone(),
-                current_step: r.current_step,
-                pos: [pos.x, pos.y],
-                vel: [kin.vx, kin.vy],
-            })
-            .collect();
-
-        struct PedUpdate {
-            entity: Entity,
-            new_pos: [f64; 2],
-            new_vel: [f64; 2],
-            speed: f64,
-            advance_step: bool,
-        }
-
-        let mut updates = Vec::with_capacity(peds.len());
-
-        for ped in &peds {
-            let (entity, path, current_step, pos, vel) = (
-                &ped.entity,
-                &ped.path,
-                &ped.current_step,
-                &ped.pos,
-                &ped.vel,
-            );
-            if *current_step >= path.len() {
-                continue;
-            }
-
-            let target_node = NodeIndex::new(path[*current_step] as usize);
-            let raw_target = self.road_graph.inner()[target_node].pos;
-
-            let target_pos = if *current_step > 0 {
-                let prev_node = NodeIndex::new(path[*current_step - 1] as usize);
-                let prev_pos = self.road_graph.inner()[prev_node].pos;
-                let seg_dx = raw_target[0] - prev_pos[0];
-                let seg_dy = raw_target[1] - prev_pos[1];
-                let seg_len = (seg_dx * seg_dx + seg_dy * seg_dy).sqrt();
-                if seg_len > 0.1 {
-                    let perp_x = -seg_dy / seg_len;
-                    let perp_y = seg_dx / seg_len;
-                    [raw_target[0] + perp_x * 5.0, raw_target[1] + perp_y * 5.0]
-                } else {
-                    raw_target
-                }
-            } else {
-                raw_target
-            };
-
-            let nearby = spatial.nearest_within_radius(*pos, 3.0);
-            let neighbors: Vec<PedestrianNeighbor> = nearby
-                .iter()
-                .filter(|n| {
-                    let ddx = n.pos[0] - pos[0];
-                    let ddy = n.pos[1] - pos[1];
-                    ddx * ddx + ddy * ddy > 0.0001
-                })
-                .take(10)
-                .filter_map(|n| {
-                    let idx = snapshot.id_to_index.get(&n.id)?;
-                    let n_vtype = snapshot.vehicle_types[*idx];
-                    let radius = AgentSnapshot::half_width_for_type(n_vtype);
-                    Some(PedestrianNeighbor {
-                        pos: n.pos,
-                        vel: [0.0, 0.0],
-                        radius,
-                    })
-                })
-                .collect();
-
-            let accel = social_force::social_force_acceleration(
-                *pos,
-                *vel,
-                target_pos,
-                &neighbors,
-                &self.social_force_params,
-            );
-            let (new_vel, speed) = social_force::integrate_pedestrian(
-                *vel,
-                accel,
-                dt,
-                self.social_force_params.max_speed,
-            );
-
-            let new_pos = [pos[0] + new_vel[0] * dt, pos[1] + new_vel[1] * dt];
-
-            let dx = target_pos[0] - new_pos[0];
-            let dy = target_pos[1] - new_pos[1];
-            let dist = (dx * dx + dy * dy).sqrt();
-            let advance = dist < 2.0;
-
-            updates.push(PedUpdate {
-                entity: *entity,
-                new_pos,
-                new_vel,
-                speed,
-                advance_step: advance,
-            });
-        }
-
-        for upd in updates {
-            let (pos, kin, route) = self
-                .world
-                .query_one_mut::<(&mut Position, &mut Kinematics, &mut Route)>(upd.entity)
-                .unwrap();
-            pos.x = upd.new_pos[0];
-            pos.y = upd.new_pos[1];
-            kin.vx = upd.new_vel[0];
-            kin.vy = upd.new_vel[1];
-            kin.speed = upd.speed;
-            if upd.speed > 1e-6 {
-                kin.heading = upd.new_vel[1].atan2(upd.new_vel[0]);
-            }
-            if upd.advance_step {
-                route.current_step += 1;
-            }
-        }
-    }
 }
