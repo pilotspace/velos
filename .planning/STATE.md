@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: SUMO Replacement Engine
-status: in-progress
-stopped_at: Completed 13-02-PLAN.md (pedestrian GPU adaptive pipeline wiring)
-last_updated: "2026-03-08T13:28:31Z"
+status: executing
+stopped_at: Completed 13-01-PLAN.md (agent profile wiring + GLOSA advisory speed)
+last_updated: "2026-03-08T13:32:31.661Z"
 last_activity: 2026-03-08 -- Completed Plan 13-02 (pedestrian GPU adaptive pipeline wiring)
 progress:
   total_phases: 9
@@ -150,6 +150,9 @@ Recent decisions affecting current work:
 - [12-02]: Spatial index rebuilt post-GPU for sublane (snapshot_post + spatial_post) -- avoids stale gaps
 - [12-01]: GAP_MAX_WAIT_TIME/GAP_FORCED_ACCEPTANCE_FACTOR/GAP_WAIT_REDUCTION_RATE kept as local lets (universal physics, not vehicle-specific)
 - [12-01]: gap_acceptance_ttc replaces t_headway as base TTC threshold in WGSL intersection gap acceptance
+- [13-01]: Option<&AgentProfile> ECS query with Commuter default -- backward compatible with entities spawned before this change
+- [13-01]: step_glosa at step 4.5 (after signal priority, before perception) -- GLOSA-modified speeds captured by perception pipeline
+- [13-01]: MockSignalController for GLOSA unit tests -- avoids dependency on full graph topology
 - [13-02]: classify_density used for adaptive cell sizing (2m/5m/10m) instead of hardcoded 3m in GPU pedestrian dispatch
 - [13-02]: 5m bounding box margin prevents degenerate zero-size grids when pedestrians are co-located
 - [13-02]: CPU tick() step_pedestrians unchanged -- GPU path only in tick_gpu()
@@ -173,6 +176,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-08T13:28:31Z
-Stopped at: Completed 13-02-PLAN.md (pedestrian GPU adaptive pipeline wiring)
-Resume file: .planning/phases/13-final-integration-wiring-gpu-transfer-audit/13-03-PLAN.md
+Last session: 2026-03-08T13:32:31.657Z
+Stopped at: Completed 13-01-PLAN.md (agent profile wiring + GLOSA advisory speed)
+Resume file: None

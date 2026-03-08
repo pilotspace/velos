@@ -44,8 +44,8 @@ Prove VELOS can replace SUMO: reimplement all core SUMO features, add agent inte
 
 ### Agent Intelligence
 
-- [ ] **INT-01**: Multi-factor pathfinding cost function: time, comfort, safety, fuel, signal delay, prediction penalty
-- [ ] **INT-02**: Configurable agent profiles (Commuter, Bus, Truck, Emergency, Tourist, Teen, Senior, Cyclist) with per-profile cost weights
+- [x] **INT-01**: Multi-factor pathfinding cost function: time, comfort, safety, fuel, signal delay, prediction penalty
+- [x] **INT-02**: Configurable agent profiles (Commuter, Bus, Truck, Emergency, Tourist, Teen, Senior, Cyclist) with per-profile cost weights
 - [x] **INT-03**: GPU perception phase: sense leader vehicle, signal state, traffic signs, nearby agents, global congestion map
 - [x] **INT-04**: GPU evaluation phase: cost comparison current route vs alternative, output should_reroute flag + cost_delta
 - [x] **INT-05**: Staggered reroute evaluation (1K agents/step, ~50s full cycle) with immediate triggers for blocked edges, emergency vehicles, and prediction flags
@@ -64,7 +64,7 @@ Prove VELOS can replace SUMO: reimplement all core SUMO features, add agent inte
 
 - [x] **SIG-01**: Actuated signal control with loop detector-triggered phase transitions
 - [x] **SIG-02**: Adaptive signal control with demand-responsive timing optimization
-- [ ] **SIG-03**: SPaT (Signal Phase and Timing) broadcast to agents within range for signal-aware driving
+- [x] **SIG-03**: SPaT (Signal Phase and Timing) broadcast to agents within range for signal-aware driving
 - [x] **SIG-04**: Signal priority request from buses and emergency vehicles
 - [x] **SIG-05**: Traffic sign interaction: speed limits, stop/yield, no-turn restrictions, school zones affect agent speed targets and cost function
 
@@ -157,11 +157,11 @@ Which phases cover which requirements. Updated during roadmap creation.
 | AGT-08 | Phase 6 | Complete |
 | SIG-01 | Phase 9 | Complete |
 | SIG-02 | Phase 9 | Complete |
-| SIG-03 | Phase 13 | Pending |
+| SIG-03 | Phase 13 | Complete |
 | SIG-04 | Phase 9 | Complete |
 | SIG-05 | Phase 9 | Complete |
-| INT-01 | Phase 13 | Pending |
-| INT-02 | Phase 13 | Pending |
+| INT-01 | Phase 13 | Complete |
+| INT-02 | Phase 13 | Complete |
 | INT-03 | Phase 9 | Complete |
 | INT-04 | Phase 9 | Complete |
 | INT-05 | Phase 9 | Complete |
