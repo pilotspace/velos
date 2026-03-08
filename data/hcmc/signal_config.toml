@@ -1,0 +1,20 @@
+# VELOS Signal Controller Configuration
+#
+# Each [[intersection]] entry overrides the default fixed-time controller
+# for the specified road graph node. Intersections not listed here
+# default to FixedTimeController with 30s green phases.
+#
+# Fields:
+#   node_id     - Road graph node index (u32)
+#   controller  - "fixed" | "actuated" | "adaptive" (default: "fixed")
+#   min_green   - Minimum green time in seconds (default: 7.0)
+#   max_green   - Maximum green time in seconds (default: 60.0, actuated only)
+#   gap_threshold - Gap-out threshold in seconds (default: 3.0, actuated only)
+#
+# Example:
+#   [[intersection]]
+#   node_id = 42
+#   controller = "actuated"
+#   min_green = 10.0
+#   max_green = 45.0
+#   gap_threshold = 2.5

@@ -13,6 +13,7 @@
 
 pub mod actuated;
 pub mod adaptive;
+pub mod config;
 pub mod controller;
 pub mod detector;
 pub mod error;
@@ -21,6 +22,7 @@ pub mod priority;
 pub mod signs;
 pub mod spat;
 
+pub use config::{load_signal_config, IntersectionConfig, SignalConfig};
 use detector::DetectorReading;
 use plan::PhaseState;
 use priority::PriorityRequest;
