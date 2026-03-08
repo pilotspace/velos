@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: SUMO Replacement Engine
-status: completed
-stopped_at: Completed 08-03-PLAN.md (Phase 08 complete)
-last_updated: "2026-03-08T04:13:04.430Z"
-last_activity: 2026-03-08 -- Completed Plan 08-03 (HCMC behavioral rules)
+status: in-progress
+stopped_at: Completed 09-02-PLAN.md
+last_updated: "2026-03-08T05:12:29Z"
+last_activity: 2026-03-08 -- Completed Plan 09-02 (GPU perception-driven HCMC behaviors)
 progress:
-  total_phases: 4
+  total_phases: 6
   completed_phases: 4
-  total_plans: 22
-  completed_plans: 22
-  percent: 100
+  total_plans: 25
+  completed_plans: 24
+  percent: 96
 ---
 
 # Project State
@@ -25,12 +25,12 @@ See: .planning/PROJECT.md (updated 2026-03-07)
 
 ## Current Position
 
-Phase: 8 of 8 (Tuning Vehicle Behavior to More Realistic in HCM) -- COMPLETED
-Plan: 03 of 03 complete -- HCMC behavioral rules (creep, weaving, gap acceptance)
-Status: Phase 08 complete
-Last activity: 2026-03-08 -- Completed Plan 08-03 (HCMC behavioral rules)
+Phase: 9 of 10 (Sim Loop Integration, Startup & Frame Pipeline)
+Plan: 02 of 03 complete -- GPU perception-driven HCMC behaviors
+Status: In progress
+Last activity: 2026-03-08 -- Completed Plan 09-02 (perception buffer + HCMC behavior functions)
 
-Progress: [██████████] 100%
+Progress: [████████░░] 80%
 
 ## Accumulated Context
 
@@ -122,6 +122,10 @@ Recent decisions affecting current work:
 - [08-03]: Forced acceptance after 5s wait (threshold halved) prevents intersection deadlock
 - [Phase 08]: [08-02]: KRAUSS_TAU kept as WGSL const (1.0s) -- reaction time is physics, not vehicle-type-specific
 - [Phase 08]: [08-02]: 8 f32 per vehicle type in GPU uniform buffer: v0, s0, t_headway, a, b, krauss_accel, krauss_decel, krauss_sigma
+- [09-02]: PerceptionResult WGSL field named perc_flags (not flags) to avoid collision with AgentState.flags
+- [09-02]: Placeholder perception_result_buffer pre-allocated 300K agents (9.6 MB zeroed) -- avoids Option complexity
+- [09-02]: Gap acceptance defaults VT_CAR for unknown leader type -- neutral size_factor, full type-aware logic on CPU
+- [09-02]: naga dev-dependency for automated WGSL parse validation in unit tests
 
 ### Pending Todos
 
@@ -140,6 +144,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-08T04:05:39Z
-Stopped at: Completed 08-03-PLAN.md (Phase 08 complete)
-Resume file: N/A -- all phases complete
+Last session: 2026-03-08T05:12:29Z
+Stopped at: Completed 09-02-PLAN.md
+Resume file: .planning/phases/09-sim-loop-integration-startup-frame-pipeline/09-03-PLAN.md
