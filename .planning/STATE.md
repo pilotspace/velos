@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: SUMO Replacement Engine
-status: completed
-stopped_at: Completed 13-03-PLAN.md (CPU tick parity + dirty-flag GPU buffer optimization) -- Phase 13 complete
-last_updated: "2026-03-08T13:54:28.908Z"
-last_activity: 2026-03-08 -- Completed Plan 13-03 (CPU tick parity + dirty-flag optimization)
+status: in-progress
+stopped_at: Completed 14-01-PLAN.md
+last_updated: "2026-03-08T15:04:26Z"
+last_activity: 2026-03-08 -- Completed Plan 14-01 (GTFS bus stop snapping + BusSpawner)
 progress:
-  total_phases: 9
+  total_phases: 13
   completed_phases: 9
-  total_plans: 34
-  completed_plans: 34
-  percent: 100
+  total_plans: 36
+  completed_plans: 35
+  percent: 97
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-07)
 
 **Core value:** Motorbikes move realistically through traffic using continuous sublane positioning -- not forced into discrete lanes like Western traffic models
-**Current focus:** Phase 13 -- Final Integration Wiring & GPU Transfer Audit
+**Current focus:** Phase 14 -- Wire GTFS Bus Stops Pipeline
 
 ## Current Position
 
-Phase: 13 of 13 (Final Integration Wiring & GPU Transfer Audit)
-Plan: 03 of 03 complete -- 03 (CPU tick parity + dirty-flag GPU buffer optimization)
-Status: Phase complete
-Last activity: 2026-03-08 -- Completed Plan 13-03 (CPU tick parity + dirty-flag optimization)
+Phase: 14 of 15 (Wire GTFS Bus Stops Pipeline)
+Plan: 01 of 02 complete -- 01 (GTFS bus stop snapping + BusSpawner)
+Status: In progress
+Last activity: 2026-03-08 -- Completed Plan 14-01 (GTFS bus stop snapping + BusSpawner)
 
-Progress: [██████████] 100%
+Progress: [█████████▓] 97%
 
 ## Accumulated Context
 
@@ -160,6 +160,8 @@ Recent decisions affecting current work:
 - [13-03]: Dirty-flag gated GPU buffer uploads: signal_dirty/prediction_dirty fields on SimWorld
 - [13-03]: Phase transition detection via get_phase_state(0) comparison before/after ctrl.tick()
 - [13-03]: Dirty flags initialized true to force initial upload on first frame
+- [14-01]: BusSpawner accepts stop_id_to_index HashMap -- decouples snapping from spawner construction
+- [14-01]: velos-net depends on velos-demand and velos-vehicle for snap_gtfs_stops high-level function
 
 ### Pending Todos
 
@@ -180,6 +182,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-08T13:44:07Z
-Stopped at: Completed 13-03-PLAN.md (CPU tick parity + dirty-flag GPU buffer optimization) -- Phase 13 complete
-Resume file: None
+Last session: 2026-03-08T15:04:26Z
+Stopped at: Completed 14-01-PLAN.md
+Resume file: .planning/phases/14-wire-gtfs-bus-stops-pipeline/14-01-SUMMARY.md

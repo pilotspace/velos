@@ -177,7 +177,7 @@ Phases 5 through 8 execute sequentially. Each phase depends on the prior phase.
 | 11. GPU Buffer Wiring — Perception & Emergency | 2/2 | Complete    | 2026-03-08 | - |
 | 12. CPU Lane-Change, Prediction Loop & GPU Config | 2/2 | Complete    | 2026-03-08 | - |
 | 13. Final Integration Wiring & GPU Transfer Audit | 3/3 | Complete    | 2026-03-08 | - |
-| 14. Wire GTFS → Bus Stops Pipeline | v1.1 | 0/2 | In Progress | - |
+| 14. Wire GTFS → Bus Stops Pipeline | v1.1 | 1/2 | In Progress | - |
 | 15. File Size Reduction & Housekeeping | v1.1 | 0/0 | Not Started | - |
 
 ### Phase 12: CPU Lane-Change, Prediction Loop & GPU Config
@@ -228,7 +228,7 @@ Plans:
   3. E2E bus dwell lifecycle works: GTFS load → bus_stops populated → bus arrives → dwell → resume
 **Plans:** 2 plans
 Plans:
-- [ ] 14-01-PLAN.md — Edge R-tree stop snapping (velos-net) + BusSpawner (velos-demand)
+- [x] 14-01-PLAN.md — Edge R-tree stop snapping (velos-net) + BusSpawner (velos-demand)
 - [ ] 14-02-PLAN.md — Wire GTFS loading + bus spawning into SimWorld startup and frame loop
 
 ### Phase 15: File Size Reduction & Housekeeping
