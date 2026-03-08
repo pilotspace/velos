@@ -177,7 +177,7 @@ Phases 5 through 8 execute sequentially. Each phase depends on the prior phase.
 | 11. GPU Buffer Wiring — Perception & Emergency | 2/2 | Complete    | 2026-03-08 | - |
 | 12. CPU Lane-Change, Prediction Loop & GPU Config | 2/2 | Complete    | 2026-03-08 | - |
 | 13. Final Integration Wiring & GPU Transfer Audit | 3/3 | Complete    | 2026-03-08 | - |
-| 14. Wire GTFS → Bus Stops Pipeline | v1.1 | 0/0 | Not Started | - |
+| 14. Wire GTFS → Bus Stops Pipeline | v1.1 | 0/2 | In Progress | - |
 | 15. File Size Reduction & Housekeeping | v1.1 | 0/0 | Not Started | - |
 
 ### Phase 12: CPU Lane-Change, Prediction Loop & GPU Config
@@ -226,9 +226,10 @@ Plans:
   1. SimWorld startup loads GTFS data and populates bus_stops — bus_stops.len() > 0 when GTFS data is available
   2. Bus agents spawned on GTFS routes encounter BusStop locations and trigger begin_dwell() — FLAG_BUS_DWELLING is set during dwell
   3. E2E bus dwell lifecycle works: GTFS load → bus_stops populated → bus arrives → dwell → resume
-**Plans:** 0/0
+**Plans:** 2 plans
 Plans:
-(none yet)
+- [ ] 14-01-PLAN.md — Edge R-tree stop snapping (velos-net) + BusSpawner (velos-demand)
+- [ ] 14-02-PLAN.md — Wire GTFS loading + bus spawning into SimWorld startup and frame loop
 
 ### Phase 15: File Size Reduction & Housekeeping
 **Goal**: Reduce oversized source files below 700-line convention, fix stale tracking documents, and finalize Phase 13 Nyquist validation — pure tech debt closure with no behavioral changes
@@ -241,6 +242,7 @@ Plans:
   3. REQUIREMENTS.md footer matches actual coverage (45/45 complete, 0 pending)
   4. ROADMAP.md Phase 5 and Phase 9 checkboxes reflect completed status
   5. Phase 13 VALIDATION.md is compliant (not draft)
-**Plans:** 0/0
+**Plans:** 2 plans
 Plans:
-(none yet)
+- [ ] 14-01-PLAN.md — Edge R-tree stop snapping (velos-net) + BusSpawner (velos-demand)
+- [ ] 14-02-PLAN.md — Wire GTFS loading + bus spawning into SimWorld startup and frame loop

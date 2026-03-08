@@ -11,6 +11,7 @@ pub mod graph;
 pub mod osm_import;
 pub mod projection;
 pub mod routing;
+pub mod snap;
 pub mod spatial;
 pub mod sumo_demand;
 #[allow(dead_code, clippy::collapsible_if)]
@@ -22,4 +23,5 @@ pub use graph::{OneWayDirection, RoadClass, RoadEdge, RoadGraph, RoadNode, TimeW
 pub use osm_import::import_osm;
 pub use projection::EquirectangularProjection;
 pub use routing::find_route;
+pub use snap::{build_edge_rtree, snap_gtfs_stops, snap_to_nearest_edge, EdgeSegment};
 pub use spatial::{AgentPoint, SpatialIndex};

@@ -18,6 +18,8 @@ toml = { workspace = true }
 postcard = { workspace = true }
 rayon = { workspace = true }
 velos-signal = { path = "../velos-signal" }
+velos-demand = { path = "../velos-demand" }
+velos-vehicle = { path = "../velos-vehicle" }
 
 [dev-dependencies]
 env_logger = { workspace = true }
