@@ -52,7 +52,7 @@ fn make_linear_graph() -> RoadGraph {
 /// Spawn agents via ticking the simulation. Returns SimWorld with agents.
 fn spawn_agents_via_tick() -> SimWorld {
     let graph = make_linear_graph();
-    let mut sim = SimWorld::new(graph);
+    let mut sim = SimWorld::new_cpu_only(graph);
     sim.sim_state = velos_gpu::sim::SimState::Running;
 
     // Tick many times to trigger spawning via the demand system.

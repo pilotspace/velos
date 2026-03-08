@@ -111,8 +111,8 @@ impl GpuState {
             velos_net::RoadGraph::new(petgraph::graph::DiGraph::new())
         };
 
-        let compute_dispatcher = ComputeDispatcher::new(&device);
-        let sim = SimWorld::new(road_graph);
+        let mut compute_dispatcher = ComputeDispatcher::new(&device);
+        let sim = SimWorld::new(road_graph, &device, &queue, &mut compute_dispatcher);
         let road_lines = sim.road_edge_lines();
         let (cx, cy) = sim.network_center();
 
