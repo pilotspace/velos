@@ -1,7 +1,7 @@
 # Requirements: VELOS v1.1 SUMO Replacement Engine
 
 **Defined:** 2026-03-07
-**Revised:** 2026-03-07 (pivoted from digital twin platform to SUMO replacement proof)
+**Revised:** 2026-03-08 (added Phase 8 tuning requirements)
 **Core Value:** Motorbikes move realistically through traffic using continuous sublane positioning -- not forced into discrete lanes like Western traffic models
 
 ## v1.1 Requirements
@@ -67,6 +67,15 @@ Prove VELOS can replace SUMO: reimplement all core SUMO features, add agent inte
 - [x] **SIG-03**: SPaT (Signal Phase and Timing) broadcast to agents within range for signal-aware driving
 - [x] **SIG-04**: Signal priority request from buses and emergency vehicles
 - [x] **SIG-05**: Traffic sign interaction: speed limits, stop/yield, no-turn restrictions, school zones affect agent speed targets and cost function
+
+### HCMC Behavior Tuning
+
+- [ ] **TUN-01**: All ~50 vehicle behavior parameters externalized to TOML config file (data/hcmc/vehicle_params.toml) with per-vehicle-type sections
+- [ ] **TUN-02**: GPU/CPU parameter parity -- GPU shader reads vehicle-type parameters from uniform buffer populated from config, eliminating hardcoded WGSL constants
+- [ ] **TUN-03**: HCMC-calibrated parameter defaults for all vehicle types (motorbike v0=35-45 km/h, car v0=30-40 km/h, truck v0=30-40 km/h not 90 km/h)
+- [ ] **TUN-04**: Red-light creep behavior -- motorbikes inch past stop line during red, forming dense swarm ahead of cars
+- [ ] **TUN-05**: Aggressive weaving -- speed-dependent lateral filter gap (0.5m base + 0.1*delta_v) for motorbike squeeze-through
+- [ ] **TUN-06**: Yield-based intersection negotiation -- vehicle-type-dependent TTC gap acceptance with size intimidation and deadlock prevention
 
 ## v2 Requirements
 
@@ -163,12 +172,18 @@ Which phases cover which requirements. Updated during roadmap creation.
 | RTE-05 | Phase 7 | Complete |
 | RTE-06 | Phase 7 | Complete |
 | RTE-07 | Phase 7 | Complete |
+| TUN-01 | Phase 8 | Planned |
+| TUN-02 | Phase 8 | Planned |
+| TUN-03 | Phase 8 | Planned |
+| TUN-04 | Phase 8 | Planned |
+| TUN-05 | Phase 8 | Planned |
+| TUN-06 | Phase 8 | Planned |
 
 **Coverage:**
-- v1.1 requirements: 39 total
-- Mapped to phases: 39
+- v1.1 requirements: 45 total
+- Mapped to phases: 45
 - Unmapped: 0
 
 ---
 *Requirements defined: 2026-03-07*
-*Last updated: 2026-03-07 after SUMO replacement roadmap creation*
+*Last updated: 2026-03-08 after Phase 8 tuning requirements added*

@@ -1,0 +1,140 @@
+# HCMC-calibrated vehicle behavior parameters.
+#
+# All speeds in m/s, distances in metres, times in seconds.
+# These values are tuned for Ho Chi Minh City urban mixed traffic,
+# NOT highway/European defaults from IDM literature.
+
+[motorbike]
+# 40 km/h desired speed (HCMC urban arterial)
+v0 = 11.1
+s0 = 1.0
+t_headway = 0.8
+a = 2.0
+b = 3.0
+delta = 4.0
+krauss_accel = 2.0
+krauss_decel = 3.0
+krauss_sigma = 0.3
+krauss_tau = 1.0
+krauss_max_speed = 11.1
+krauss_min_gap = 1.0
+politeness = 0.1
+threshold = 0.2
+safe_decel = -4.0
+right_bias = 0.1
+gap_acceptance_ttc = 1.0
+min_filter_gap = 0.5
+max_lateral_speed = 1.2
+half_width = 0.25
+swarm_lateral_speed = 0.8
+
+[car]
+# 35 km/h desired speed (HCMC congested urban, NOT 50 km/h)
+v0 = 9.7
+s0 = 2.0
+t_headway = 1.5
+a = 1.0
+b = 2.0
+delta = 4.0
+krauss_accel = 1.0
+krauss_decel = 4.5
+krauss_sigma = 0.5
+krauss_tau = 1.0
+krauss_max_speed = 9.7
+krauss_min_gap = 2.0
+politeness = 0.3
+threshold = 0.2
+safe_decel = -4.0
+right_bias = 0.1
+gap_acceptance_ttc = 1.5
+
+[bus]
+# 30 km/h desired speed (slower due to stops)
+v0 = 8.3
+s0 = 3.0
+t_headway = 1.5
+a = 1.0
+b = 2.5
+delta = 4.0
+krauss_accel = 1.0
+krauss_decel = 4.5
+krauss_sigma = 0.4
+krauss_tau = 1.0
+krauss_max_speed = 8.3
+krauss_min_gap = 3.0
+politeness = 0.5
+threshold = 0.2
+safe_decel = -4.0
+right_bias = 0.1
+gap_acceptance_ttc = 1.8
+
+[truck]
+# 35 km/h desired speed (HCMC city center, NOT 90 km/h)
+v0 = 9.7
+s0 = 4.0
+t_headway = 2.0
+a = 1.0
+b = 2.5
+delta = 4.0
+krauss_accel = 1.0
+krauss_decel = 4.5
+krauss_sigma = 0.4
+krauss_tau = 1.0
+krauss_max_speed = 9.7
+krauss_min_gap = 4.0
+politeness = 0.4
+threshold = 0.2
+safe_decel = -4.0
+right_bias = 0.1
+gap_acceptance_ttc = 2.0
+
+[bicycle]
+# 15 km/h desired speed
+v0 = 4.17
+s0 = 1.5
+t_headway = 1.0
+a = 1.0
+b = 3.0
+delta = 4.0
+krauss_accel = 1.0
+krauss_decel = 3.0
+krauss_sigma = 0.3
+krauss_tau = 1.0
+krauss_max_speed = 4.17
+krauss_min_gap = 1.5
+politeness = 0.2
+threshold = 0.2
+safe_decel = -4.0
+right_bias = 0.1
+gap_acceptance_ttc = 1.2
+min_filter_gap = 0.5
+max_lateral_speed = 0.8
+half_width = 0.25
+swarm_lateral_speed = 0.6
+
+[emergency]
+# 60 km/h desired speed (sirens on)
+v0 = 16.7
+s0 = 2.0
+t_headway = 1.2
+a = 2.0
+b = 3.5
+delta = 4.0
+krauss_accel = 2.0
+krauss_decel = 4.5
+krauss_sigma = 0.2
+krauss_tau = 1.0
+krauss_max_speed = 16.7
+krauss_min_gap = 2.0
+politeness = 0.0
+threshold = 0.2
+safe_decel = -4.0
+right_bias = 0.1
+gap_acceptance_ttc = 0.5
+
+[pedestrian]
+desired_speed = 1.2
+personal_space = 0.5
+jaywalking_rate_arterial = 0.1
+jaywalking_rate_local = 0.3
+gap_acceptance_ttc = 2.0

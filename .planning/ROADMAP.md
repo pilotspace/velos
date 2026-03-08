@@ -81,12 +81,29 @@ Plans:
 - [x] 07-03-PLAN.md -- CCH weight customization + bidirectional Dijkstra query + rayon parallel queries
 - [x] 07-04-PLAN.md -- Prediction ensemble (velos-predict crate): BPR + ETS + historical + ArcSwap overlay
 - [x] 07-05-PLAN.md -- GPU perception kernel (perception.wgsl + PerceptionPipeline)
-- [ ] 07-06-PLAN.md -- Reroute scheduler + CPU evaluation + simulation integration
+- [x] 07-06-PLAN.md -- Reroute scheduler + CPU evaluation + simulation integration
+
+### Phase 8: Tuning Vehicle Behavior to More Realistic in HCM
+**Goal**: All vehicle behavior parameters are externalized to config, GPU/CPU parameter mismatch is eliminated, and HCMC-specific behavioral rules (red-light creep, aggressive weaving, yield-based intersection negotiation) produce visually realistic mixed-traffic patterns
+**Depends on**: Phase 7
+**Requirements**: TUN-01, TUN-02, TUN-03, TUN-04, TUN-05, TUN-06
+**Success Criteria** (what must be TRUE):
+  1. All ~50 vehicle behavior parameters load from data/hcmc/vehicle_params.toml -- no hardcoded IDM/Krauss constants remain in the GPU shader or CPU factory functions
+  2. GPU and CPU produce identical IDM/Krauss acceleration for the same vehicle type and same config values (parameter mismatch eliminated)
+  3. Truck v0 is 30-40 km/h (HCMC urban), not 90 km/h (highway); car v0 is 30-40 km/h, not 50 km/h
+  4. Motorbikes inch forward past the stop line during red lights, forming a dense swarm that launches first on green
+  5. Motorbikes squeeze through 0.5m lateral gaps at low speed differences, with gap threshold widening at higher speed differences
+  6. Vehicles at unsignalized intersections negotiate via gap acceptance with vehicle-type-dependent TTC thresholds and no deadlock
+**Plans:** 3 plans
+Plans:
+- [ ] 08-01-PLAN.md -- VehicleConfig TOML infrastructure + HCMC-calibrated defaults + factory migration
+- [ ] 08-02-PLAN.md -- GPU parameter unification: GpuVehicleParams uniform buffer + WGSL shader migration
+- [ ] 08-03-PLAN.md -- HCMC behavioral rules: red-light creep, aggressive weaving, intersection gap acceptance
 
 ## Progress
 
 **Execution Order:**
-Phases 5 through 7 execute sequentially. Each phase depends on the prior phase.
+Phases 5 through 8 execute sequentially. Each phase depends on the prior phase.
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
@@ -96,4 +113,5 @@ Phases 5 through 7 execute sequentially. Each phase depends on the prior phase.
 | 4. MOBIL Wiring + Motorbike Jam Fix + Performance | v1.0 | 3/3 | Complete | 2026-03-07 |
 | 5. Foundation & GPU Engine | v1.1 | 6/6 | Complete | 2026-03-07 |
 | 6. Agent Models & Signal Control | v1.1 | 1/7 | In progress | - |
-| 7. Intelligence, Routing & Prediction | 6/6 | Complete   | 2026-03-07 | - |
+| 7. Intelligence, Routing & Prediction | v1.1 | 6/6 | Complete | 2026-03-07 |
+| 8. Tuning Vehicle Behavior (HCM) | v1.1 | 0/3 | Planned | - |

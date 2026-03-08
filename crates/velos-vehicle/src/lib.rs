@@ -7,6 +7,7 @@
 //! - **Gridlock** cycle detection on agent waiting graphs
 
 pub mod bus;
+pub mod config;
 pub mod emergency;
 pub mod error;
 pub mod gridlock;
