@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: SUMO Replacement Engine
 status: completed
-stopped_at: Completed 08-01-PLAN.md
-last_updated: "2026-03-08T03:56:56Z"
-last_activity: 2026-03-08 -- Completed Plan 08-01 (Vehicle config TOML infrastructure)
+stopped_at: Completed 08-02-PLAN.md
+last_updated: "2026-03-08T04:07:28.315Z"
+last_activity: 2026-03-08 -- Completed Plan 08-02 (GPU parameter unification)
 progress:
   total_phases: 4
-  completed_phases: 3
-  total_plans: 19
-  completed_plans: 19
-  percent: 100
+  completed_phases: 4
+  total_plans: 22
+  completed_plans: 22
+  percent: 67
 ---
 
 # Project State
@@ -25,12 +25,12 @@ See: .planning/PROJECT.md (updated 2026-03-07)
 
 ## Current Position
 
-Phase: 8 of 8 (Tuning Vehicle Behavior to More Realistic in HCM) -- IN PROGRESS
-Plan: 01 of 03 complete -- Vehicle config infrastructure with HCMC-calibrated defaults
-Status: Plan 08-01 complete
-Last activity: 2026-03-08 -- Completed Plan 08-01 (Vehicle config TOML infrastructure)
+Phase: 8 of 8 (Tuning Vehicle Behavior to More Realistic in HCM) -- COMPLETED
+Plan: 03 of 03 complete -- HCMC behavioral rules (creep, weaving, gap acceptance)
+Status: Phase 08 complete
+Last activity: 2026-03-08 -- Completed Plan 08-03 (HCMC behavioral rules)
 
-Progress: [███-------] 33%
+Progress: [██████████] 100%
 
 ## Accumulated Context
 
@@ -116,6 +116,12 @@ Recent decisions affecting current work:
 - [08-01]: Motorbike t_headway reduced from 1.0s to 0.8s for aggressive HCMC following
 - [08-01]: VehicleConfig::default() hardcoded fallback matches TOML file for resilience
 - [08-01]: SublaneParams default min_filter_gap 0.6->0.5m, max_lateral_speed 1.0->1.2 m/s
+- [08-03]: Red-light creep limited to motorbike/bicycle with 0.3 m/s max, 5m ramp distance
+- [08-03]: Speed-dependent gap widening: effective_gap = base + 0.1 * |delta_v|
+- [08-03]: Size intimidation factors: truck/bus=1.3x, emergency=2.0x, motorbike/bicycle=0.8x
+- [08-03]: Forced acceptance after 5s wait (threshold halved) prevents intersection deadlock
+- [Phase 08]: [08-02]: KRAUSS_TAU kept as WGSL const (1.0s) -- reaction time is physics, not vehicle-type-specific
+- [Phase 08]: [08-02]: 8 f32 per vehicle type in GPU uniform buffer: v0, s0, t_headway, a, b, krauss_accel, krauss_decel, krauss_sigma
 
 ### Pending Todos
 
@@ -134,6 +140,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-08T03:56:56Z
-Stopped at: Completed 08-01-PLAN.md
-Resume file: .planning/phases/08-tuning-vehicle-behavior-to-more-realistic-in-hcm/08-02-PLAN.md
+Last session: 2026-03-08T04:06:00Z
+Stopped at: Completed 08-02-PLAN.md
+Resume file: .planning/phases/08-tuning-vehicle-behavior-to-more-realistic-in-hcm/08-03-PLAN.md
