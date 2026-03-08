@@ -2,7 +2,7 @@
 
 ## What This Is
 
-A native macOS desktop application that simulates mixed urban traffic (motorbikes, cars, pedestrians) in real-time using GPU compute. Runs ~1.5K agents on an HCMC District 1 road network at 30+ FPS, rendered natively via wgpu on Apple Silicon (Metal backend). Built as a pure Rust application using winit for windowing and egui for the dashboard UI.
+A GPU-first traffic microsimulation engine for Ho Chi Minh City that simulates 280K agents (motorbikes, cars, buses, trucks, bicycles, emergency vehicles, pedestrians) in real-time using Rust + wgpu compute shaders. Features motorbike-native sublane model, CCH intelligent routing with prediction-informed rerouting, HCMC-calibrated mixed traffic behavior (red-light creep, aggressive weaving, gap acceptance), and SUMO file compatibility. Runs as a native macOS desktop application with egui dashboard on Apple Silicon (Metal backend).
 
 ## Core Value
 
@@ -13,72 +13,61 @@ Motorbikes move realistically through traffic using continuous sublane positioni
 ### Validated
 
 - GPU compute pipeline dispatching agent updates via wgpu/Metal -- v1.0
-- f64 CPU / f32 GPU arithmetic (no fixed-point for POC) -- v1.0
-- hecs ECS managing agent state with GPU buffer mapping -- v1.0
-- CFL numerical stability checks on simulation timestep -- v1.0
 - Motorbike sublane model with continuous lateral position and filtering behavior -- v1.0
-- Car IDM (Intelligent Driver Model) car-following -- v1.0
-- MOBIL lane-change decision model for cars -- v1.0
-- Pedestrian basic social force model (repulsion + attraction, no adaptive workgroups) -- v1.0
-- OSM import of small HCMC road network into graph structure -- v1.0
-- A* pathfinding on petgraph (no CCH, no rerouting) -- v1.0
-- rstar R-tree spatial index for neighbor queries -- v1.0
-- Traffic signal control at intersections (fixed-time) -- v1.0
-- OD matrices and time-of-day demand profiles for agent spawning -- v1.0
-- winit window with wgpu render surface -- v1.0
-- GPU-instanced 2D rendering with styled agent shapes and direction arrows -- v1.0
-- Zoom/pan camera, visible road lanes, intersection areas -- v1.0
-- egui immediate-mode UI for simulation controls (start/stop/speed/reset) -- v1.0
-- egui dashboard panels for real-time metrics and agent statistics -- v1.0
-- Frame time and throughput benchmarks -- v1.0
-- Gridlock detection at intersections -- v1.0
+- Car IDM car-following + MOBIL lane-change -- v1.0
+- Pedestrian basic social force model -- v1.0
+- OSM import, A* pathfinding, rstar R-tree spatial index -- v1.0
+- Traffic signal control (fixed-time), OD matrices, demand profiles -- v1.0
+- egui dashboard with simulation controls and real-time metrics -- v1.0
+- GPU-instanced 2D rendering with styled shapes, zoom/pan -- v1.0
+- GPU-first physics with per-lane wave-front dispatch at 280K-agent scale -- v1.1
+- Multi-GPU partitioning (METIS) with boundary agent protocol -- v1.1
+- Fixed-point arithmetic (Q16.16/Q12.20/Q8.8) for cross-GPU determinism -- v1.1
+- Krauss car-following model (SUMO default) + runtime-selectable per agent -- v1.1
+- 5-district HCMC road network (Districts 1, 3, 5, 10, Binh Thanh, ~25K edges) -- v1.1
+- SUMO .net.xml network import + .rou.xml demand import -- v1.1
+- All 7 vehicle types: motorbike, car, bus (GTFS), truck, bicycle, emergency, pedestrian -- v1.1
+- Bus dwell lifecycle with empirical model + GTFS 130 HCMC routes -- v1.1
+- Pedestrian adaptive GPU workgroups with prefix-sum compaction -- v1.1
+- Emergency vehicle yield + signal priority -- v1.1
+- Meso-micro hybrid with 100m buffer zones and velocity-matching -- v1.1
+- CCH pathfinding with dynamic weight customization (3ms update) -- v1.1
+- 8 agent profiles (Commuter, Bus, Truck, Emergency, Tourist, Teen, Senior, Cyclist) with multi-factor cost -- v1.1
+- GPU perception + evaluation phases for autonomous agent decisions -- v1.1
+- BPR+ETS+historical prediction ensemble, staggered reroute (1K/step) -- v1.1
+- Actuated + adaptive signal control, SPaT/GLOSA broadcast, V2I -- v1.1
+- Traffic sign interaction (speed limits, stop/yield, no-turn, school zones) -- v1.1
+- HCMC behavior tuning: red-light creep, aggressive weaving, yield-based gap acceptance -- v1.1
+- All vehicle params externalized to TOML config with GPU/CPU parity -- v1.1
 
 ### Active
 
-<!-- v1.1 Digital Twin Platform -- Full v2 architecture implementation -->
-
-(Defined in REQUIREMENTS.md)
+(None -- next milestone requirements to be defined via `/gsd:new-milestone`)
 
 ### Out of Scope
 
-- Multi-GPU / RTX 4090 deployment -- macOS single-GPU first
-- 280K agent scale -- targeting ~1K for this slice
-- Full 5-district coverage -- one small HCMC area only
-- Fixed-point arithmetic (Q16.16/Q12.20/Q8.8) -- deferred to scale-up phase
-- Wave-front (Gauss-Seidel) dispatch -- simple parallel dispatch for POC
-- CCH pathfinding -- A* on petgraph sufficient for 1K agents
-- Prediction ensemble (BPR+ETS+historical) -- no travel time prediction
-- Mesoscopic queue model / meso-micro hybrid -- full micro only
-- Dynamic rerouting -- agents follow initial A* path
-- Bicycle agents -- deferred
-- Pedestrian adaptive GPU workgroups -- basic social force only
-- deck.gl web visualization -- using native wgpu rendering instead
-- FCD/GeoJSON/Parquet data exports -- deferred to later milestone
-- Calibration / GEH validation -- no real-world data comparison yet
-- Scenario DSL / batch runner -- interactive single-scenario only
-- Redis pub/sub / WebSocket scaling -- in-process egui handles local control
-- OAuth / authentication -- single-user desktop app
-- CesiumJS 3D visualization -- 2D top-down view sufficient
-- API server (gRPC/REST) -- deferred to v2
+- Wiedemann 99 car-following -- requires PTV-calibrated datasets unavailable for HCMC
+- SUMO TraCI compatibility -- synchronous single-threaded protocol incompatible with GPU-parallel execution
+- Real-time sensor data fusion -- requires data partnerships; offline historical data sufficient
+- ML/DL prediction (PyTorch/TF) -- Python sidecar latency; in-process BPR+ETS+historical sufficient
+- Multi-node distributed sim -- 280K agents fit on single-node 2-4 GPUs
 
 ## Context
 
-Shipped v1.0 MVP with 7,802 Rust LOC + 117 WGSL LOC across 6 crates.
+Shipped v1.1 SUMO Replacement Engine with 31,780 Rust LOC + 1,501 WGSL LOC across ~12 crates.
 Tech stack: Rust nightly (2024 edition), wgpu 28 (Metal backend), hecs ECS, petgraph, rstar, egui.
-185 tests passing, 4/4 E2E flows verified, 25/25 requirements satisfied.
+168 commits over 3 days (2026-03-06 to 2026-03-09).
+45/45 v1.1 requirements satisfied, 11/11 phases verified, 10/10 E2E flows complete.
 
-Known tech debt: GPU compute pipeline proven via tests but not wired into main sim loop (CPU-side ECS physics sufficient at 1.5K agents). `should_jaywalk()` tested but not wired into sim loop.
-
-Initial visual verification confirmed motorbike filtering, swarming, dispersal, and pedestrian social force behavior look correct.
+Known tech debt: sublane.rs CREEP/GAP constants could be wired to config (values already match defaults). Multi-GPU boundary protocol validated with logical partitions; physical multi-adapter untested.
 
 ## Constraints
 
 - **Platform**: macOS Apple Silicon (Metal GPU backend via wgpu)
-- **Scale**: ~1.5K agents on HCMC District 1 road network
+- **Scale**: 280K agents on 5-district HCMC road network (~25K edges)
 - **Toolchain**: Rust nightly (Edition 2024) -- needs portable_simd, async traits
 - **App framework**: winit + egui (pure Rust, no webview)
-- **UI**: egui immediate-mode GUI rendered via wgpu
-- **Arithmetic**: f64 on CPU, f32 on GPU (no fixed-point for POC)
+- **Arithmetic**: Fixed-point (Q16.16/Q12.20/Q8.8) for GPU; f64 on CPU reference paths
 - **No external services**: Everything runs locally, no cloud dependencies
 
 ## Tech Stack
@@ -88,53 +77,35 @@ Initial visual verification confirmed motorbike filtering, swarming, dispersal, 
 | Language | Rust nightly (2024 edition) | portable_simd, async traits |
 | GPU | wgpu + WGSL shaders | Cross-platform GPU abstraction, Metal on macOS |
 | ECS | hecs | Lightweight, minimal overhead for simulation entities |
-| CPU parallel | rayon + tokio | rayon for compute (OSM parse, pathfinding), tokio for async IO |
-| Pathfinding | A* on petgraph | Simple, sufficient for 1K agents on small network |
+| CPU parallel | rayon + tokio | rayon for compute, tokio for async IO |
+| Pathfinding | CCH (custom) | 3ms dynamic weight updates, 0.02ms/query on 25K edges |
+| Prediction | BPR+ETS+historical ensemble | In-process, ArcSwap lock-free overlay |
 | Spatial index | rstar | R-tree for neighbor queries in agent interactions |
-| Window | winit | Cross-platform windowing, proven with wgpu (used by Bevy) |
-| UI | egui + egui-wgpu | Immediate-mode GUI rendered on same wgpu surface as simulation |
-| Rendering | GPU-instanced wgpu 2D | Styled shapes, direction arrows, zoom/pan, one draw call per type |
-| Sim control | In-process | Direct function calls from egui to simulation engine, zero overhead |
-| Serialization | bincode (internal) + Parquet (future) | Fast checkpoints now, columnar exports later |
+| Window | winit | Cross-platform windowing, proven with wgpu |
+| UI | egui + egui-wgpu | Immediate-mode GUI on same wgpu surface |
+| Rendering | GPU-instanced wgpu 2D | Styled shapes, direction arrows, zoom/pan |
+| Sim control | In-process | Direct function calls from egui |
+| Config | TOML (vehicle_params.toml) | Per-vehicle-type behavior parameters |
+| Serialization | postcard (graph), bincode (internal) | Fast compact serialization |
 
 ## Key Decisions
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| f64 CPU / f32 GPU instead of fixed-point | No emulated i64 in WGSL, no golden vectors. Determinism deferred to 280K scale | Good |
-| Simple parallel dispatch instead of wave-front | Wave-front matters at 280K for convergence, not at 1K POC scale | Good |
-| A* on petgraph instead of custom CCH | CCH is massive custom work. A* sufficient for small network, no rerouting | Good |
-| No prediction/meso-micro | These are scale features. POC proves simulation pipeline, not optimization | Good |
-| Motorbikes + cars + pedestrians (no bicycles) | Core differentiator + essential interactions. Bicycles deferred | Good |
-| Styled + instanced rendering | GPU-instanced draw calls, styled shapes with direction arrows, zoom/pan | Good |
-| Rendering from Phase 1 | Visual feedback from day one. Minimal window with dots, grows with features | Good |
-| egui in Phase 2 | Add controls when there's real simulation to control | Good |
-| winit+egui instead of Tauri+React | No webview/wgpu surface conflict, single Rust binary, proven pattern | Good |
+| f64 CPU / f32 GPU for v1.0, fixed-point for v1.1 | POC first, determinism at scale | Good |
+| Per-lane wave-front (Gauss-Seidel) dispatch | Convergence at 280K scale, GPU-friendly | Good |
+| Custom CCH instead of library | No Rust CCH crate exists; BFS bisection ordering | Good |
+| In-process BPR+ETS+historical prediction | No Python bridge latency, ArcSwap lock-free | Good |
+| Krauss + IDM dual car-following | SUMO compatibility (Krauss) + academic standard (IDM) | Good |
+| METIS k-way partitioning (BFS fallback) | Balanced GPU load; libmetis fails on macOS | Good |
+| GPU perception + evaluation pipeline | Autonomous agent decisions at GPU scale | Good |
+| Polymorphic signal controllers (trait dispatch) | Fixed/actuated/adaptive via Box\<dyn\> | Good |
+| TOML vehicle config with GPU uniform buffer | Externalized params, GPU/CPU parity | Good |
+| CSV GTFS parser (not gtfs-structures) | Handles non-standard HCMC data, lighter deps | Good |
+| winit+egui instead of Tauri+React | No webview conflict, single Rust binary | Good |
 | Nightly Rust | Need portable_simd for math performance | Good |
-| ~1K agents first | Prove pipeline on Metal before scaling to 280K on RTX 4090 | Good |
-| Keep ~12 crate structure | Create crates as needed, split at 700 lines | Good |
-| BFS visited-set for gridlock | Simpler than Tarjan SCC, sufficient at POC scale | Good |
-| Pure CPU math models (IDM/MOBIL/signal) | f64 precision, zero external deps beyond thiserror/log | Good |
-| Probe-based gap scanning for sublane | 0.3m step size, obstacle-edge sweep for swarming | Good |
-| Spatial query radius 6m + 20-neighbor cap | Prevents O(n^2) at density; heading filter prevents deadlocks | Good |
-| Linear drift over 2s for lane changes | Simple, visually smooth, no complex interpolation needed | Good |
-
-## Current Milestone: v1.1 SUMO Replacement Engine
-
-**Goal:** Prove VELOS can replace SUMO by reimplementing all core SUMO features, adding Cities:Skylines-style agent intelligence and V2I that SUMO lacks, and optimizing for GPU-scale (280K+ agents). No web platform or data exports this milestone -- pure simulation engine proof.
-
-**Target features:**
-- Multi-GPU wave-front dispatch with fixed-point arithmetic for cross-GPU determinism
-- Krauss car-following model (SUMO default) alongside IDM, runtime-selectable per agent
-- SUMO .net.xml network import + .rou.xml demand import for model compatibility
-- All agent types: motorbike sublane, cars, trucks, buses (GTFS), bicycles, pedestrians, emergency
-- Agent intelligence: Cities:Skylines multi-factor cost function with configurable profiles
-- GPU perception + evaluation phases for autonomous agent decision-making
-- CCH dynamic pathfinding with prediction-informed routing (BPR+ETS+historical ensemble)
-- Actuated + adaptive signal control, SPaT broadcast, signal priority, V2I communication
-- Traffic sign interaction affecting agent behavior and cost function
-- Meso-micro hybrid with graduated buffer zones
-- 5-district HCMC network (25K edges, 280K agents)
+| ~12 crate workspace with 700-line limit | Clean separation, manageable files | Good |
+| Motorbike sublane: probe-based gap scanning | 0.3m step, obstacle-edge sweep for swarming | Good |
 
 ---
-*Last updated: 2026-03-07 after v1.1 SUMO replacement pivot*
+*Last updated: 2026-03-09 after v1.1 milestone*
