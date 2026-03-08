@@ -33,6 +33,7 @@ use crate::multi_gpu::MultiGpuScheduler;
 use crate::partition::partition_network;
 use crate::perception::PerceptionPipeline;
 use crate::renderer::AgentInstance;
+use crate::sim_perception::PerceptionBuffers;
 use crate::sim_reroute::RerouteState;
 use crate::sim_snapshot::AgentSnapshot;
 use crate::sim_startup;
@@ -119,17 +120,16 @@ pub struct SimWorld {
     /// Reroute evaluation subsystem state.
     pub(crate) reroute: RerouteState,
     /// GPU perception pipeline. None in CPU-only test paths.
-    /// Used by Plan 09-02 (frame pipeline) for perception dispatch.
-    #[allow(dead_code)]
     pub(crate) perception: Option<PerceptionPipeline>,
     /// Loaded vehicle configuration.
-    /// Used by Plan 09-02 (frame pipeline) for runtime param queries.
     #[allow(dead_code)]
     pub(crate) vehicle_config: VehicleConfig,
     /// Loop detectors for actuated signal controllers.
-    /// Used by Plan 09-03 (detector wiring) for actuated signal feedback.
     #[allow(dead_code)]
     pub(crate) loop_detectors: Vec<(NodeIndex, Vec<LoopDetector>)>,
+    /// Pre-allocated GPU buffers for perception pipeline input.
+    /// None in CPU-only test paths.
+    pub(crate) perception_buffers: Option<PerceptionBuffers>,
 }
 
 impl SimWorld {
@@ -176,6 +176,10 @@ impl SimWorld {
         // Create perception pipeline (300K max covers 280K target).
         let perception = PerceptionPipeline::new(device, 300_000);
 
+        // Pre-allocate perception auxiliary buffers.
+        let edge_count = road_graph.edge_count() as u32;
+        let perception_buffers = PerceptionBuffers::new(device, edge_count);
+
         let mut sim = Self {
             world: World::new(),
             road_graph,
@@ -196,6 +200,7 @@ impl SimWorld {
             perception: Some(perception),
             vehicle_config,
             loop_detectors,
+            perception_buffers: Some(perception_buffers),
         };
 
         // Initialize reroute subsystem (builds CCH, prediction service).
@@ -244,6 +249,7 @@ impl SimWorld {
             perception: None,
             vehicle_config,
             loop_detectors,
+            perception_buffers: None,
         }
     }
 
@@ -269,6 +275,7 @@ impl SimWorld {
         self.social_force_params = SocialForceParams::default();
         self.partition_mode = PartitionMode::Single;
         self.reroute = RerouteState::new();
+        // perception_buffers kept (GPU buffers are reusable)
         for (_, ctrl) in &mut self.signal_controllers {
             ctrl.reset();
         }

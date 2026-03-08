@@ -19,6 +19,7 @@ mod sim_helpers;
 mod sim_mobil;
 mod sim_lifecycle;
 mod sim_render;
+mod sim_perception;
 mod sim_reroute;
 pub mod sim_snapshot;
 
