@@ -33,7 +33,7 @@ Prove VELOS can replace SUMO: reimplement all core SUMO features, add agent inte
 
 ### Agent Models
 
-- [ ] **AGT-01**: Bus agents with empirical dwell time model (5s + 0.5s/boarding + 0.67s/alighting, cap 60s)
+- [x] **AGT-01**: Bus agents with empirical dwell time model (5s + 0.5s/boarding + 0.67s/alighting, cap 60s)
 - [x] **AGT-02**: GTFS import for 130 HCMC bus routes with stop locations and schedules
 - [x] **AGT-03**: Bicycle agents with sublane model (rightmost position, IDM v0=15km/h)
 - [x] **AGT-04**: Pedestrian adaptive GPU workgroups with prefix-sum compaction (3-8x speedup)
@@ -147,7 +147,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | NET-06 | Phase 5 | Complete |
 | CFM-01 | Phase 5 | Complete (05-01) |
 | CFM-02 | Phase 5 | Complete (05-01) |
-| AGT-01 | Phase 10 | Pending |
+| AGT-01 | Phase 10 | Complete |
 | AGT-02 | Phase 6 | Complete |
 | AGT-03 | Phase 6 | Complete (06-01) |
 | AGT-04 | Phase 6 | Complete |

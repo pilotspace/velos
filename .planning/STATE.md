@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: SUMO Replacement Engine
-status: completed
-stopped_at: Completed 09-03-PLAN.md (full frame pipeline wiring)
-last_updated: "2026-03-08T05:32:21.969Z"
-last_activity: 2026-03-08 -- Completed Plan 09-03 (full frame pipeline wiring)
+status: in_progress
+stopped_at: Completed 10-01-PLAN.md
+last_updated: "2026-03-08T07:26:49Z"
+last_activity: 2026-03-08 -- Completed Plan 10-01 (bus dwell wiring)
 progress:
-  total_phases: 6
+  total_phases: 7
   completed_phases: 5
-  total_plans: 25
-  completed_plans: 25
-  percent: 90
+  total_plans: 27
+  completed_plans: 26
+  percent: 93
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-07)
 
 **Core value:** Motorbikes move realistically through traffic using continuous sublane positioning -- not forced into discrete lanes like Western traffic models
-**Current focus:** Phase 7 -- Intelligence, Routing & Prediction
+**Current focus:** Phase 10 -- Sim Loop Integration: Bus Dwell & Meso-Micro
 
 ## Current Position
 
-Phase: 9 of 10 (Sim Loop Integration, Startup & Frame Pipeline)
-Plan: 03 of 03 complete -- All plans done: 01 (startup init), 02 (HCMC behaviors), 03 (full frame pipeline)
-Status: Phase 09 complete
-Last activity: 2026-03-08 -- Completed Plan 09-03 (full frame pipeline wiring)
+Phase: 10 of 11 (Sim Loop Integration: Bus Dwell & Meso-Micro)
+Plan: 01 of 02 complete -- 01 (bus dwell wiring)
+Status: Phase 10 in progress
+Last activity: 2026-03-08 -- Completed Plan 10-01 (bus dwell wiring)
 
-Progress: [█████████░] 90%
+Progress: [█████████░] 93%
 
 ## Accumulated Context
 
@@ -135,6 +135,9 @@ Recent decisions affecting current work:
 - [09-03]: Signal priority proximity threshold 100m from intersection on incoming edge
 - [09-03]: PerceptionBuffers pre-allocated at startup with zeroed congestion grid (20x20, 500m cells)
 - [09-03]: step_pedestrians extracted to sim_pedestrians.rs for sim.rs 700-line compliance
+- [10-01]: Bus dwell runs on CPU (state machine), GPU reads FLAG_BUS_DWELLING to hold speed=0
+- [10-01]: step_bus_dwell() inserted after vehicle physics, before pedestrian physics in pipeline
+- [10-01]: Stochastic passenger counts (uniform RNG) sufficient for engine proof; GTFS deferred
 
 ### Pending Todos
 
@@ -153,6 +156,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-08T05:27:00Z
-Stopped at: Completed 09-03-PLAN.md (full frame pipeline wiring)
-Resume file: Phase 09 complete. Next: Phase 10 (gap closure)
+Last session: 2026-03-08T07:26:49Z
+Stopped at: Completed 10-01-PLAN.md
+Resume file: .planning/phases/10-sim-loop-integration-bus-dwell-meso-micro/10-02-PLAN.md

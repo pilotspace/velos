@@ -132,7 +132,7 @@ Plans:
   1. begin_dwell() and tick_dwell() are called in the sim loop — buses stop at BusStop locations, FLAG_BUS_DWELLING is set, and dwell time follows the empirical model (5s + 0.5s/boarding + 0.67s/alighting)
   2. velos-meso is a dependency of velos-core or velos-gpu — the crate is imported and its queue model is active for peripheral zone edges
   3. Agents crossing from meso to micro zones pass through the 100m buffer zone with velocity-matching insertion — no speed discontinuities at zone boundaries
-**Plans:** 2 plans
+**Plans:** 1/2 plans executed
 Plans:
 - [ ] 10-01-PLAN.md — Bus dwell wiring: BusState spawn, step_bus_dwell CPU step, GPU FLAG_BUS_DWELLING guard
 - [ ] 10-02-PLAN.md — Meso-micro hybrid wiring: velos-meso dependency, zone config, step_meso, zone transitions
@@ -167,5 +167,5 @@ Phases 5 through 8 execute sequentially. Each phase depends on the prior phase.
 | 7. Intelligence, Routing & Prediction | v1.1 | 6/6 | Complete | 2026-03-07 |
 | 8. Tuning Vehicle Behavior (HCM) | v1.1 | 3/3 | Complete | 2026-03-08 |
 | 9. Sim Loop Integration — Startup & Frame Pipeline | 2/3 | In Progress|  | - |
-| 10. Sim Loop Integration — Bus Dwell & Meso-Micro | v1.1 | 0/2 | Planned | - |
+| 10. Sim Loop Integration — Bus Dwell & Meso-Micro | 1/2 | In Progress|  | - |
 | 11. GPU Buffer Wiring — Perception & Emergency | v1.1 | 0/0 | Planned | - |
