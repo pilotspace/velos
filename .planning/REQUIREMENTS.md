@@ -183,9 +183,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 - v1.1 requirements: 45 total
 - Mapped to phases: 45
 - Unmapped: 0
-- Complete: 29
-- Pending (gap closure): 16 (Phase 9: 13, Phase 10: 3)
+- Complete: 42
+- Pending: 3 (Phase 10: AGT-01, AGT-05, AGT-06)
+- GPU-path correctness (Phase 11): TUN-04, TUN-06, INT-03, AGT-08
 
 ---
 *Requirements defined: 2026-03-07*
-*Last updated: 2026-03-08 after Phase 8 tuning requirements added*
+*Last updated: 2026-03-08 after gap closure phases 10-11 assigned*

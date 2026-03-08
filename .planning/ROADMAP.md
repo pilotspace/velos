@@ -3,7 +3,7 @@
 ## Milestones
 
 - Shipped **v1.0 MVP** -- Phases 1-4 (shipped 2026-03-07)
-- Active **v1.1 SUMO Replacement Engine** -- Phases 5-10 (in progress)
+- Active **v1.1 SUMO Replacement Engine** -- Phases 5-11 (in progress)
 
 ## Phases
 
@@ -25,6 +25,7 @@
 - [x] **Phase 8: Tuning Vehicle Behavior (HCM)** - Vehicle behavior externalized to TOML config, GPU/CPU parameter parity, HCMC-specific behavioral rules (completed 2026-03-08)
 - [ ] **Phase 9: Sim Loop Integration — Startup & Frame Pipeline** - Wire all Phase 6-8 modules into sim.rs tick_gpu() and app.rs startup: perception, reroute, polymorphic signals, sign upload, vehicle params, HCMC behaviors
 - [ ] **Phase 10: Sim Loop Integration — Bus Dwell & Meso-Micro Hybrid** - Wire bus dwell lifecycle and velos-meso crate into sim loop for peripheral zone transitions
+- [ ] **Phase 11: GPU Buffer Wiring — Perception & Emergency** - Wire perception result buffer to wave_front.wgsl binding(8) and emergency vehicle upload to sim loop tick (gap closure)
 
 ## Phase Details
 
@@ -134,6 +135,20 @@ Plans:
 **Plans:** 0 plans
 Plans: (none yet)
 
+### Phase 11: GPU Buffer Wiring — Perception & Emergency
+**Goal**: Perception results reach GPU behavior functions (red-light creep, gap acceptance) via binding(8), and emergency vehicle yield cones activate via GPU upload — closing the last integration gaps in the sim loop
+**Depends on**: Phase 9
+**Requirements**: (GPU-path correctness for TUN-04, TUN-06, INT-03, AGT-08)
+**Gap Closure:** Closes integration gaps from v1.1 audit (perception binding, emergency upload)
+**Success Criteria** (what must be TRUE):
+  1. set_perception_result_buffer() is called in SimWorld::new() — binding(8) contains perception results, not zeros
+  2. red_light_creep_speed() reads actual signal_state from perception buffer — creep activates on red, not on green
+  3. intersection_gap_acceptance() reads actual leader_speed and wait_time from perception buffer
+  4. upload_emergency_vehicles() is called every frame in tick_gpu() — emergency_count > 0 when emergency vehicles exist
+  5. GPU yield cone activates for agents near emergency vehicles (not early-exiting due to zero count)
+**Plans:** 0 plans
+Plans: (none yet)
+
 ## Progress
 
 **Execution Order:**
@@ -151,3 +166,4 @@ Phases 5 through 8 execute sequentially. Each phase depends on the prior phase.
 | 8. Tuning Vehicle Behavior (HCM) | v1.1 | 3/3 | Complete | 2026-03-08 |
 | 9. Sim Loop Integration — Startup & Frame Pipeline | 2/3 | In Progress|  | - |
 | 10. Sim Loop Integration — Bus Dwell & Meso-Micro | v1.1 | 0/0 | Planned | - |
+| 11. GPU Buffer Wiring — Perception & Emergency | v1.1 | 0/0 | Planned | - |
