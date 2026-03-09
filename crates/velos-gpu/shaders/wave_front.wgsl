@@ -113,6 +113,11 @@ const FLAG_YIELDING: u32 = 4u;
 // Matches CPU sublane model threshold in cpu_reference.rs.
 const MOTORBIKE_LATERAL_CLEARANCE: f32 = 0.8;
 
+// Motorbike sublane lateral drift parameters (matches CPU sublane.rs defaults).
+const MOTORBIKE_MAX_LATERAL_SPEED: f32 = 1.2;  // m/s
+const MOTORBIKE_HALF_WIDTH: f32 = 0.25;         // m
+const BICYCLE_MAX_LATERAL_SPEED: f32 = 0.8;     // m/s
+
 // Emergency vehicle data for yield cone detection (max 16 active)
 struct EmergencyVehicle {
     pos_x: f32,
@@ -612,6 +617,55 @@ fn wave_front_update(
         let avg_speed = (own_speed_f32 + new_speed_f32) * 0.5;
         let displacement = avg_speed * dt;
         let displacement_fix = f32_to_fixpos(displacement);
+
+        // Motorbike/bicycle sublane lateral drift:
+        // Drift away from leader when laterally close, using deterministic random target.
+        // This is a simplified GPU version of CPU sublane::compute_desired_lateral().
+        if agent.vehicle_type == VT_MOTORBIKE || agent.vehicle_type == VT_BICYCLE {
+            let own_lat = f32(agent.lateral) / 256.0;  // Q8.8 → metres
+            let max_lat_speed = select(BICYCLE_MAX_LATERAL_SPEED, MOTORBIKE_MAX_LATERAL_SPEED,
+                                       agent.vehicle_type == VT_MOTORBIKE);
+
+            // Default road width: 2 lanes × 3.5m = 7.0m (covers most HCMC roads).
+            let road_w = 7.0;
+            let min_lat = MOTORBIKE_HALF_WIDTH;
+            let max_lat = road_w - MOTORBIKE_HALF_WIDTH;
+
+            var desired_lat = own_lat;
+
+            if i > 0u {
+                // Has a leader — check lateral proximity
+                let leader_idx = lane_agents[offset + i - 1u];
+                let leader = agents[leader_idx];
+                let leader_lat = f32(leader.lateral) / 256.0;
+                let lateral_dist = abs(own_lat - leader_lat);
+
+                if lateral_dist < MOTORBIKE_LATERAL_CLEARANCE {
+                    // Too close laterally to leader — pick a direction to dodge.
+                    // Use deterministic RNG to choose dodge direction, biased by
+                    // available space on each side.
+                    let rng_val = rand_float(agent.rng_state, step);
+                    let space_right = own_lat - min_lat;
+                    let space_left = max_lat - own_lat;
+                    let right_prob = space_right / (space_left + space_right + 0.01);
+
+                    if rng_val > right_prob {
+                        // Dodge left (increase lateral)
+                        desired_lat = min(own_lat + MOTORBIKE_LATERAL_CLEARANCE, max_lat);
+                    } else {
+                        // Dodge right (decrease lateral)
+                        desired_lat = max(own_lat - MOTORBIKE_LATERAL_CLEARANCE, min_lat);
+                    }
+                }
+            }
+
+            // Apply lateral drift: clamp displacement by max lateral speed × dt
+            let lat_diff = desired_lat - own_lat;
+            let max_disp = max_lat_speed * dt;
+            let lat_displacement = clamp(lat_diff, -max_disp, max_disp);
+            let new_lat = clamp(own_lat + lat_displacement, min_lat, max_lat);
+            agent.lateral = i32(round(new_lat * 256.0));  // f32 → Q8.8
+        }
 
         // Write updated state in-place (wave-front: followers see these updates)
         agent.position = agent.position + displacement_fix;

@@ -301,7 +301,10 @@ impl SimWorld {
                 .map(|e| e.lane_count as f64)
                 .unwrap_or(2.0);
             let road_width = lane_count * 3.5;
-            let initial_lateral = road_width / 2.0;
+            let half_width = 0.25; // motorbike/bicycle body half-width
+            let min_lat = half_width;
+            let max_lat = road_width - half_width;
+            let initial_lateral = self.rng.gen_range(min_lat..=max_lat);
 
             self.world.spawn((
                 base_components.0,
