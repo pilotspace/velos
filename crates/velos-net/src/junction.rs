@@ -14,15 +14,18 @@ use crate::graph::RoadGraph;
 
 /// Minimum arc length in metres for a valid Bezier turn.
 /// Curves shorter than this produce degenerate tangents (NaN) and visual artifacts.
-const MIN_ARC_LENGTH_M: f64 = 1.0;
+const MIN_ARC_LENGTH_M: f64 = 0.3;
 
 /// Number of sample points for arc-length estimation.
 const ARC_LENGTH_SAMPLES: usize = 20;
 
 /// Bezier control point tension: 0.0 = straight line, 1.0 = full centroid.
-/// 0.3 gives tighter turns that match real intersection geometry better than
-/// using the raw junction node position (which creates unrealistically wide arcs).
 const BEZIER_TENSION: f64 = 0.3;
+
+/// Junction curve radius in metres. P0/P2 are placed this far from the junction
+/// centroid along approach/departure directions, keeping curves short (~2*radius)
+/// so agents don't teleport to the far end of connected edges on junction entry.
+const JUNCTION_RADIUS_M: f64 = 15.0;
 
 /// Number of sample steps per curve for conflict detection grid search.
 const CONFLICT_SEARCH_STEPS: usize = 30;
@@ -216,17 +219,43 @@ pub fn precompute_junction(
     let mut turns = Vec::new();
 
     for inc in &incoming {
-        let p0 = g[inc.source()].pos;
+        let source_pos = g[inc.source()].pos;
         for out in &outgoing {
             // Skip U-turns: entry source == exit target
             if inc.source() == out.target() {
                 continue;
             }
-            let p2 = g[out.target()].pos;
+            let target_pos = g[out.target()].pos;
 
-            // Compute tension-weighted control point: blend between straight-line
-            // midpoint and junction centroid. BEZIER_TENSION=0.3 gives tighter,
-            // more realistic turns than using the raw centroid (which bulges outward).
+            // P0: JUNCTION_RADIUS_M back from junction along incoming approach direction.
+            // This keeps the curve start near where the agent actually is (edge end),
+            // preventing the backward teleport that caused flickering.
+            let approach = [centroid[0] - source_pos[0], centroid[1] - source_pos[1]];
+            let approach_len = (approach[0] * approach[0] + approach[1] * approach[1]).sqrt();
+            let radius0 = JUNCTION_RADIUS_M.min(approach_len * 0.5);
+            let p0 = if approach_len > 0.01 {
+                [
+                    centroid[0] - (approach[0] / approach_len) * radius0,
+                    centroid[1] - (approach[1] / approach_len) * radius0,
+                ]
+            } else {
+                centroid
+            };
+
+            // P2: JUNCTION_RADIUS_M forward from junction along departure direction.
+            let depart = [target_pos[0] - centroid[0], target_pos[1] - centroid[1]];
+            let depart_len = (depart[0] * depart[0] + depart[1] * depart[1]).sqrt();
+            let radius2 = JUNCTION_RADIUS_M.min(depart_len * 0.5);
+            let p2 = if depart_len > 0.01 {
+                [
+                    centroid[0] + (depart[0] / depart_len) * radius2,
+                    centroid[1] + (depart[1] / depart_len) * radius2,
+                ]
+            } else {
+                centroid
+            };
+
+            // Tension-weighted control point between straight-line midpoint and centroid.
             let midpoint = [(p0[0] + p2[0]) / 2.0, (p0[1] + p2[1]) / 2.0];
             let p1 = [
                 midpoint[0] + BEZIER_TENSION * (centroid[0] - midpoint[0]),
