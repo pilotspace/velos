@@ -41,6 +41,7 @@ mvt-reader = "2.3"
 earcutr = "0.5"
 flate2 = "1"
 lru = "0.12"
+geo-types = "0.7"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

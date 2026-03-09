@@ -12,6 +12,7 @@ pub mod perception;
 pub mod error;
 pub mod multi_gpu;
 pub mod partition;
+pub mod map_tiles;
 pub mod renderer;
 pub mod sim;
 pub mod sim_startup;
@@ -37,4 +38,5 @@ pub use ped_adaptive::{GpuPedestrian, PedestrianAdaptiveParams, PedestrianAdapti
 pub use perception::{PerceptionBindings, PerceptionParams, PerceptionPipeline, PerceptionResult};
 pub use device::GpuContext;
 pub use error::GpuError;
+pub use map_tiles::{MapTileRenderer, TileVertex};
 pub use renderer::{AgentInstance, Renderer};

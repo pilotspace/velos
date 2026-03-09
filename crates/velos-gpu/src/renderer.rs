@@ -9,6 +9,7 @@
 //!   3. render_frame(encoder, view) -- record per-type draw calls
 
 use crate::camera::Camera2D;
+use crate::map_tiles::MapTileRenderer;
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 
@@ -132,6 +133,7 @@ pub struct Renderer {
     render_pipeline: wgpu::RenderPipeline,
     road_pipeline: wgpu::RenderPipeline,
     camera_bind_group: wgpu::BindGroup,
+    camera_bind_group_layout: wgpu::BindGroupLayout,
     camera_uniform_buffer: wgpu::Buffer,
     triangle_vertex_buffer: wgpu::Buffer,
     rectangle_vertex_buffer: wgpu::Buffer,
@@ -142,6 +144,8 @@ pub struct Renderer {
     road_vertex_buffer: Option<wgpu::Buffer>,
     road_vertex_count: u32,
     pub surface_format: wgpu::TextureFormat,
+    /// Optional map tile background renderer.
+    map_tiles: Option<MapTileRenderer>,
 }
 
 impl Renderer {
@@ -317,6 +321,7 @@ impl Renderer {
             render_pipeline,
             road_pipeline,
             camera_bind_group,
+            camera_bind_group_layout,
             camera_uniform_buffer,
             triangle_vertex_buffer,
             rectangle_vertex_buffer,
@@ -327,6 +332,7 @@ impl Renderer {
             road_vertex_buffer: None,
             road_vertex_count: 0,
             surface_format,
+            map_tiles: None,
         }
     }
 
@@ -458,6 +464,24 @@ impl Renderer {
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
     ) {
+        // Render map tiles first (clears the screen).
+        // If map tiles exist, agents render on top with LoadOp::Load.
+        let has_map_tiles = self.map_tiles.is_some();
+        if let Some(ref mt) = self.map_tiles {
+            mt.render(encoder, view, &self.camera_bind_group);
+        }
+
+        let load_op = if has_map_tiles {
+            wgpu::LoadOp::Load
+        } else {
+            wgpu::LoadOp::Clear(wgpu::Color {
+                r: 0.05,
+                g: 0.05,
+                b: 0.1,
+                a: 1.0,
+            })
+        };
+
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("agent_render_pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -465,12 +489,7 @@ impl Renderer {
                 resolve_target: None,
                 depth_slice: None,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color {
-                        r: 0.05,
-                        g: 0.05,
-                        b: 0.1,
-                        a: 1.0,
-                    }),
+                    load: load_op,
                     store: wgpu::StoreOp::Store,
                 },
             })],
@@ -524,6 +543,37 @@ impl Renderer {
                 instance_offset..instance_offset + tc.pedestrian_count,
             );
         }
+    }
+
+    /// Set the map tile renderer for background tile rendering.
+    pub fn set_map_tiles(&mut self, renderer: MapTileRenderer) {
+        self.map_tiles = Some(renderer);
+    }
+
+    /// Initialize map tile renderer from a PMTiles file path.
+    ///
+    /// If path is None or file not found, map tiles are silently disabled.
+    pub fn init_map_tiles(&mut self, device: &wgpu::Device, pmtiles_path: Option<&std::path::Path>) {
+        let renderer = MapTileRenderer::new(
+            device,
+            self.surface_format,
+            &self.camera_bind_group_layout,
+            pmtiles_path,
+        );
+        self.map_tiles = Some(renderer);
+    }
+
+    /// Update map tiles based on current camera viewport.
+    /// Call before `render_frame()`.
+    pub fn update_map_tiles(&mut self, camera: &Camera2D, device: &wgpu::Device) {
+        if let Some(ref mut mt) = self.map_tiles {
+            mt.update(camera, device);
+        }
+    }
+
+    /// Returns the camera bind group layout for sharing with other pipelines.
+    pub fn camera_bind_group_layout(&self) -> &wgpu::BindGroupLayout {
+        &self.camera_bind_group_layout
     }
 
     /// Total instance count across all types.
