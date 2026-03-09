@@ -251,21 +251,28 @@ impl SimWorld {
                             .map(|k| k.speed)
                             .unwrap_or(0.0);
 
+                        // Compute initial t: start at entry_t (where curve passes
+                        // through junction centroid) plus overflow from edge end.
+                        // Cap advancement beyond entry_t to prevent teleporting
+                        // through the junction when overflow is large.
+                        let t_advance = (overflow / turn.arc_length.max(1.0)).min(0.15);
+                        let initial_t = (turn.entry_t + t_advance).min(0.99);
+
                         // Attach JunctionTraversal component
                         let _ = self.world.insert_one(
                             entity,
                             JunctionTraversal {
                                 junction_node: target_node_u32,
                                 turn_index: turn_index as u16,
-                                t: 0.0,
+                                t: initial_t,
                                 lateral_offset,
                                 speed,
                                 wait_ticks: 0,
                             },
                         );
 
-                        // Bug 1 fix: IMMEDIATELY set Position to Bezier(t=0)
-                        // This prevents one-frame stale position at edge-end coordinates.
+                        // Immediately set Position to Bezier(initial_t) so there
+                        // is no one-frame stale position at edge-end coordinates.
                         let entry_edge_idx = EdgeIndex::new(turn.entry_edge as usize);
                         let road_half_width = self
                             .road_graph
@@ -274,8 +281,9 @@ impl SimWorld {
                             .map(|e| e.lane_count as f64 * 3.5 / 2.0)
                             .unwrap_or(3.5);
 
-                        let pos = turn.offset_position(0.0, lateral_offset, road_half_width);
-                        let tan = turn.tangent(0.0);
+                        let pos =
+                            turn.offset_position(initial_t, lateral_offset, road_half_width);
+                        let tan = turn.tangent(initial_t);
                         let heading = tan[1].atan2(tan[0]);
 
                         if let Ok((position, kin)) = self

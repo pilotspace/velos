@@ -103,6 +103,9 @@ impl SimWorld {
             effective_speed: f64,
             finished: bool,
             new_wait_ticks: u16,
+            /// Distance in metres the agent overshot past Bezier end.
+            /// Used for smooth chaining into next junction segment.
+            overflow_m: f64,
         }
         let mut updates: Vec<JunctionUpdate> = Vec::new();
 
@@ -175,7 +178,8 @@ impl SimWorld {
 
             // Advance t using effective_speed (post-conflict), NOT original speed.
             // This prevents position jumps when conflict detection triggers.
-            let (new_t, finished) = advance_on_bezier(a.t, effective_speed, turn.arc_length, dt);
+            let (new_t, finished, overflow_m) =
+                advance_on_bezier(a.t, effective_speed, turn.arc_length, dt);
 
             // Compute world position and heading from Bezier curve
             let entry_edge_idx = EdgeIndex::new(turn.entry_edge as usize);
@@ -198,6 +202,7 @@ impl SimWorld {
                 effective_speed,
                 finished,
                 new_wait_ticks,
+                overflow_m,
             });
         }
 
@@ -221,7 +226,8 @@ impl SimWorld {
                 // Instead of placing on exit edge (which causes teleport when
                 // the next node is also a junction), try to chain directly
                 // into the next junction up to MAX_CHAIN_DEPTH times.
-                self.handle_junction_exit(upd.entity, upd.effective_speed);
+                // Overflow distance is carried forward for smooth pre-advancement.
+                self.handle_junction_exit(upd.entity, upd.effective_speed, upd.overflow_m);
             } else {
                 // Update JunctionTraversal component with new t and wait_ticks
                 if let Ok(jt) = self
@@ -245,21 +251,30 @@ impl SimWorld {
 
     /// Short edge threshold in metres. Edges shorter than this between two
     /// junctions are traversed instantly (chained) to avoid visible teleporting.
-    const SHORT_EDGE_THRESHOLD_M: f64 = 2.0;
+    /// Keep low (≤5m) so agents visually traverse normal-length edges between
+    /// junctions instead of skipping them — higher values cause teleportation
+    /// because overflow_m + edge_length overshoots the next Bezier arc.
+    const SHORT_EDGE_THRESHOLD_M: f64 = 5.0;
 
-    /// Handle junction exit with multi-segment chaining.
+    /// Maximum t-parameter advancement beyond entry_t when chaining into the
+    /// next junction. Prevents agents from appearing near the exit of a junction
+    /// they just entered (visual teleportation through the entire curve).
+    const MAX_CHAIN_T_ADVANCE: f64 = 0.15;
+
+    /// Handle junction exit with smooth multi-segment chaining.
     ///
     /// When an agent finishes a junction Bezier (t >= 1.0), instead of placing
     /// it on the exit edge and waiting for the next frame to potentially re-enter
     /// another junction (which causes visible teleporting), this method chains
     /// through up to MAX_CHAIN_DEPTH consecutive junctions in one step.
     ///
-    /// For each chain step:
-    /// 1. Read current junction's exit edge and advance route
-    /// 2. Check if the exit edge is short AND the next node is also a junction
-    /// 3. If yes: update JunctionTraversal in-place to the next junction's Bezier
-    /// 4. If no: exit to edge normally
-    fn handle_junction_exit(&mut self, entity: Entity, speed: f64) {
+    /// **Smooth overflow carry-through:** The `overflow_m` parameter is the
+    /// distance (metres) the agent travelled past the previous Bezier end. This
+    /// distance plus the intermediate edge length is used to pre-advance the
+    /// next Bezier's t-parameter, so the agent's position is physically correct
+    /// rather than jumping to t=0. This preserves speed and prevents the
+    /// "teleport from outer-point to starter-point" flickering.
+    fn handle_junction_exit(&mut self, entity: Entity, speed: f64, mut overflow_m: f64) {
         for _chain_depth in 0..Self::MAX_CHAIN_DEPTH {
             // Read current junction traversal info
             let chain_info = {
@@ -286,18 +301,34 @@ impl SimWorld {
             }
 
             // Check if we can chain to the next junction:
-            // 1. Exit edge must be short
+            // 1. Exit edge must be short (<30m)
             // 2. Next node must have junction data
             // 3. There must be a matching turn (exit_edge -> next_next_edge)
-            let next_junction = self.find_next_junction_chain(entity, exit_edge_id);
+            let next_junction =
+                self.find_next_junction_chain(entity, exit_edge_id, &mut overflow_m);
 
             match next_junction {
                 Some((next_jn, next_turn_idx, next_turn, next_road_half_width)) => {
+                    // Smooth pre-advancement: start at entry_t (where the curve
+                    // passes through the junction centroid) plus accumulated overflow.
+                    // Cap advancement beyond entry_t to prevent teleporting through
+                    // the entire junction when overflow + edge_length >> arc_length.
+                    let next_arc = next_turn.arc_length.max(1.0);
+                    let t_advance = (overflow_m / next_arc).min(Self::MAX_CHAIN_T_ADVANCE);
+                    let initial_t =
+                        (next_turn.entry_t + t_advance).min(0.99);
+                    let next_overflow = if overflow_m > next_arc {
+                        overflow_m - next_arc
+                    } else {
+                        0.0
+                    };
+                    overflow_m = next_overflow;
+
                     // Chain: update JunctionTraversal in-place to next junction
                     if let Ok(jt) = self.world.query_one_mut::<&mut JunctionTraversal>(entity) {
                         jt.junction_node = next_jn;
                         jt.turn_index = next_turn_idx;
-                        jt.t = 0.0;
+                        jt.t = initial_t;
                         // Keep lateral_offset and speed from previous junction
                         jt.wait_ticks = 0;
                     }
@@ -307,9 +338,10 @@ impl SimWorld {
                         route.current_step += 1;
                     }
 
-                    // Set position to Bezier(t=0) of the new junction
-                    let pos = next_turn.offset_position(0.0, lateral_offset, next_road_half_width);
-                    let tan = next_turn.tangent(0.0);
+                    // Set position from Bezier at the pre-advanced t
+                    let pos =
+                        next_turn.offset_position(initial_t, lateral_offset, next_road_half_width);
+                    let tan = next_turn.tangent(initial_t);
                     let heading = tan[1].atan2(tan[0]);
 
                     if let Ok((position, kin)) = self
@@ -331,21 +363,22 @@ impl SimWorld {
                         rp.lane = 0;
                     }
 
-                    // Continue loop to check if THIS junction also chains
-                    // (agent.t is 0.0, so it won't be "finished" — loop will break
-                    //  at the JunctionTraversal read since t=0 won't trigger exit)
-                    // Actually we just set t=0, so we're done chaining for this frame.
-                    // The agent will advance through this new junction normally next frame.
+                    // If overflow consumed the entire next Bezier too, continue chaining
+                    if initial_t >= 0.99 && next_overflow > 0.0 {
+                        continue;
+                    }
+
                     self.update_wait_state(entity, speed, false);
                     return;
                 }
                 None => {
-                    // No chaining possible — normal exit to edge
+                    // No chaining possible — normal exit to edge.
+                    // Apply remaining overflow as additional offset on the exit edge.
                     let _ = self.world.remove_one::<JunctionTraversal>(entity);
 
                     if let Ok(rp) = self.world.query_one_mut::<&mut RoadPosition>(entity) {
                         rp.edge_index = exit_edge_id;
-                        rp.offset_m = exit_offset;
+                        rp.offset_m = exit_offset + overflow_m;
                         rp.lane = 0;
                     }
 
@@ -356,7 +389,7 @@ impl SimWorld {
             }
         }
 
-        // Exhausted chain depth — force normal exit
+        // Exhausted chain depth — force normal exit with remaining overflow
         let exit_info = {
             let Ok(jt) = self.world.query_one_mut::<&JunctionTraversal>(entity) else {
                 return;
@@ -372,7 +405,7 @@ impl SimWorld {
         let _ = self.world.remove_one::<JunctionTraversal>(entity);
         if let Ok(rp) = self.world.query_one_mut::<&mut RoadPosition>(entity) {
             rp.edge_index = exit_info.0;
-            rp.offset_m = exit_info.1;
+            rp.offset_m = exit_info.1 + overflow_m;
             rp.lane = 0;
         }
         self.update_agent_state(entity, speed);
@@ -381,12 +414,16 @@ impl SimWorld {
 
     /// Check if the exit edge is short and the next node has a junction to chain into.
     ///
-    /// Returns `Some((next_junction_node, turn_index, &BezierTurn, road_half_width))`
+    /// If chaining is possible, adds the intermediate edge length to `overflow_m`
+    /// so the caller can pre-advance the next Bezier (smooth transition).
+    ///
+    /// Returns `Some((next_junction_node, turn_index, BezierTurn, road_half_width))`
     /// if chaining is possible, `None` otherwise.
     fn find_next_junction_chain(
         &mut self,
         entity: Entity,
         exit_edge_id: u32,
+        overflow_m: &mut f64,
     ) -> Option<(u32, u16, BezierTurn, f64)> {
         // Check exit edge length
         let exit_edge_idx = EdgeIndex::new(exit_edge_id as usize);
@@ -395,6 +432,11 @@ impl SimWorld {
         if edge_weight.length_m > Self::SHORT_EDGE_THRESHOLD_M {
             return None;
         }
+
+        // NOTE: edge_length is added to overflow_m only AFTER confirming
+        // the chain succeeds (see bottom of function). Adding it here
+        // would corrupt overflow when the function returns None later.
+        let edge_length = edge_weight.length_m;
 
         // Get next-next node from route
         let route = self.world.query_one_mut::<&Route>(entity).ok()?;
@@ -422,6 +464,9 @@ impl SimWorld {
             .find(|(_, t)| t.entry_edge == exit_edge_id && t.exit_edge == next_next_edge)?;
 
         let road_half_width = edge_weight.lane_count as f64 * 3.5 / 2.0;
+
+        // Chain confirmed — now safe to add intermediate edge distance
+        *overflow_m += edge_length;
 
         Some((next_node_u32, turn_idx as u16, turn.clone(), road_half_width))
     }
@@ -489,6 +534,7 @@ mod tests {
             p2: [200.0, 0.0],
             arc_length: 200.0,
             exit_offset_m: 0.1,
+            entry_t: 0.0,
         };
 
         let jd = JunctionData {
@@ -607,7 +653,9 @@ mod tests {
             .query_one_mut::<&RoadPosition>(agent)
             .unwrap();
         assert_eq!(rp.edge_index, 1, "should be on exit edge");
-        assert!((rp.offset_m - 0.1).abs() < 0.01, "should be at exit_offset_m");
+        // offset_m = exit_offset (0.1) + overflow from overshooting the Bezier
+        // speed=100, arc=200, dt=0.1 => dt_param=0.05, raw_t=1.04 => overflow=(0.04)*200=8.0
+        assert!(rp.offset_m >= 0.1, "should be at or past exit_offset_m, got {}", rp.offset_m);
     }
 
     #[test]
@@ -639,6 +687,7 @@ mod tests {
             p2: [200.0, 0.0],
             arc_length: 200.0,
             exit_offset_m: 0.1,
+            entry_t: 0.0,
         };
         let turn_1 = BezierTurn {
             entry_edge: 2,
@@ -648,6 +697,7 @@ mod tests {
             p2: [100.0, -100.0],
             arc_length: 200.0,
             exit_offset_m: 0.1,
+            entry_t: 0.0,
         };
         let conflict = velos_net::junction::ConflictPoint {
             turn_a_idx: 0,
@@ -782,5 +832,337 @@ mod tests {
         let (mut sim, _, _) = make_sim_with_junction();
         // No agents -- should not panic
         sim.step_junction_traversal(0.1);
+    }
+
+    /// Build two consecutive junctions connected by a short edge (<5m).
+    ///
+    /// Graph: A --edge0(100m)--> J1 --edge1(4m)--> J2 --edge2(100m)--> B
+    /// Junctions at J1 (node 2) and J2 (node 3).
+    /// Turn at J1: edge0 -> edge1, Turn at J2: edge1 -> edge2.
+    fn make_chained_junction_graph() -> (SimWorld, u32, u32) {
+        let mut g = DiGraph::new();
+        let a = g.add_node(RoadNode { pos: [0.0, 0.0] });
+        let b = g.add_node(RoadNode { pos: [210.0, 0.0] });
+        let j1 = g.add_node(RoadNode { pos: [100.0, 0.0] }); // junction 1
+        let j2 = g.add_node(RoadNode { pos: [104.0, 0.0] }); // junction 2
+        // Extra arms to make j1/j2 qualify as junctions (need in>1 or out>1)
+        let c = g.add_node(RoadNode { pos: [100.0, 100.0] });
+        let d = g.add_node(RoadNode { pos: [104.0, 100.0] });
+
+        let _e0 = g.add_edge(a, j1, test_edge(100.0));  // edge 0
+        let _e1 = g.add_edge(j1, j2, test_edge(4.0));   // edge 1 (short!)
+        let _e2 = g.add_edge(j2, b, test_edge(100.0));   // edge 2
+        let _e3 = g.add_edge(c, j1, test_edge(100.0));   // edge 3 (extra arm)
+        let _e4 = g.add_edge(j1, c, test_edge(100.0));   // edge 4
+        let _e5 = g.add_edge(d, j2, test_edge(100.0));   // edge 5 (extra arm)
+        let _e6 = g.add_edge(j2, d, test_edge(100.0));   // edge 6
+
+        let graph = RoadGraph::new(g);
+        let j1_id = j1.index() as u32;
+        let j2_id = j2.index() as u32;
+
+        let mut sim = SimWorld::new_cpu_only(graph);
+
+        // Junction 1: turn from edge0 -> edge1
+        let turn_j1 = BezierTurn {
+            entry_edge: 0,
+            exit_edge: 1,
+            p0: [90.0, 0.0],
+            p1: [100.0, 0.0],
+            p2: [102.0, 0.0],
+            arc_length: 12.0,
+            exit_offset_m: 0.1,
+            entry_t: 0.0,
+        };
+        // Extra turn to make j1 a real junction
+        let turn_j1_extra = BezierTurn {
+            entry_edge: 3,
+            exit_edge: 4,
+            p0: [100.0, 90.0],
+            p1: [100.0, 50.0],
+            p2: [100.0, 10.0],
+            arc_length: 80.0,
+            exit_offset_m: 0.1,
+            entry_t: 0.0,
+        };
+        sim.junction_data.insert(j1_id, JunctionData {
+            turns: vec![turn_j1, turn_j1_extra],
+            conflicts: vec![],
+        });
+
+        // Junction 2: turn from edge1 -> edge2
+        let turn_j2 = BezierTurn {
+            entry_edge: 1,
+            exit_edge: 2,
+            p0: [102.0, 0.0],
+            p1: [104.0, 0.0],
+            p2: [114.0, 0.0],
+            arc_length: 12.0,
+            exit_offset_m: 0.1,
+            entry_t: 0.0,
+        };
+        let turn_j2_extra = BezierTurn {
+            entry_edge: 5,
+            exit_edge: 6,
+            p0: [104.0, 90.0],
+            p1: [104.0, 50.0],
+            p2: [104.0, 10.0],
+            arc_length: 80.0,
+            exit_offset_m: 0.1,
+            entry_t: 0.0,
+        };
+        sim.junction_data.insert(j2_id, JunctionData {
+            turns: vec![turn_j2, turn_j2_extra],
+            conflicts: vec![],
+        });
+
+        (sim, j1_id, j2_id)
+    }
+
+    #[test]
+    fn smooth_chain_preserves_speed_and_pre_advances_t() {
+        let (mut sim, j1_id, j2_id) = make_chained_junction_graph();
+
+        // Agent at t=0.95 on junction 1, speed=10 m/s
+        // Route: A(0) -> J1(2) -> J2(3) -> B(1)
+        let agent = sim.world.spawn((
+            Position { x: 99.0, y: 0.0 },
+            Kinematics {
+                vx: 10.0,
+                vy: 0.0,
+                speed: 10.0,
+                heading: 0.0,
+            },
+            RoadPosition {
+                edge_index: 0,
+                lane: 0,
+                offset_m: 99.0,
+            },
+            Route {
+                path: vec![0, 2, 3, 1], // A -> J1 -> J2 -> B
+                current_step: 0,
+            },
+            WaitState {
+                stopped_since: -1.0,
+                at_red_signal: false,
+            },
+            VehicleType::Car,
+            IdmParams {
+                v0: 13.89,
+                s0: 2.0,
+                t_headway: 1.5,
+                a: 1.0,
+                b: 2.0,
+                delta: 4.0,
+            },
+            JunctionTraversal {
+                junction_node: j1_id,
+                turn_index: 0,
+                t: 0.95,
+                lateral_offset: 3.5,
+                speed: 10.0,
+                wait_ticks: 0,
+            },
+        ));
+
+        // Step with dt=0.1, speed=10, arc=12:
+        // dt_param = 0.1*10/12 = 0.0833
+        // raw_t = 0.95 + 0.0833 = 1.0333 -> finished
+        // overflow_m = 0.0333 * 12 = 0.4m
+        // Chain: edge1 length = 4m -> accumulated overflow = 0.4 + 4 = 4.4m
+        // Next Bezier arc = 12m -> t_advance = min(4.4/12, 0.15) = 0.15 (capped)
+        // initial_t = entry_t(0.0) + 0.15 = 0.15
+        sim.step_junction_traversal(0.1);
+
+        // Agent should now be on junction 2, with t capped near entry
+        let jt = sim
+            .world
+            .query_one_mut::<&JunctionTraversal>(agent)
+            .unwrap();
+        assert_eq!(jt.junction_node, j2_id, "should have chained to junction 2");
+        assert!(
+            jt.t > 0.0 && jt.t <= 0.20,
+            "t should be capped near entry_t to prevent teleportation, got {}",
+            jt.t,
+        );
+        assert!(
+            (jt.speed - 10.0).abs() < 0.01,
+            "speed should be preserved through chain, got {}",
+            jt.speed,
+        );
+    }
+
+    #[test]
+    fn smooth_chain_overflow_applied_to_exit_edge() {
+        let (mut sim, j1_id, _j2_id) = make_chained_junction_graph();
+
+        // Make junction 1 exit onto a LONG edge (100m) so chaining won't happen.
+        // Replace junction 1 data with a turn that exits onto edge 2 (100m, too long to chain).
+        let turn_no_chain = BezierTurn {
+            entry_edge: 0,
+            exit_edge: 2, // edge 2 is 100m, won't chain
+            p0: [90.0, 0.0],
+            p1: [100.0, 0.0],
+            p2: [120.0, 0.0],
+            arc_length: 30.0,
+            exit_offset_m: 0.1,
+            entry_t: 0.0,
+        };
+        sim.junction_data.insert(j1_id, JunctionData {
+            turns: vec![turn_no_chain],
+            conflicts: vec![],
+        });
+
+        // Agent near Bezier end, high speed to create overflow
+        let agent = sim.world.spawn((
+            Position { x: 99.0, y: 0.0 },
+            Kinematics {
+                vx: 20.0,
+                vy: 0.0,
+                speed: 20.0,
+                heading: 0.0,
+            },
+            RoadPosition {
+                edge_index: 0,
+                lane: 0,
+                offset_m: 99.0,
+            },
+            Route {
+                path: vec![0, 2, 1], // A -> J1 -> B
+                current_step: 0,
+            },
+            WaitState {
+                stopped_since: -1.0,
+                at_red_signal: false,
+            },
+            VehicleType::Car,
+            IdmParams {
+                v0: 13.89,
+                s0: 2.0,
+                t_headway: 1.5,
+                a: 1.0,
+                b: 2.0,
+                delta: 4.0,
+            },
+            JunctionTraversal {
+                junction_node: j1_id,
+                turn_index: 0,
+                t: 0.95,
+                lateral_offset: 3.5,
+                speed: 20.0,
+                wait_ticks: 0,
+            },
+        ));
+
+        // dt=0.1, speed=20, arc=30: dt_param=0.0667, raw_t=1.0167
+        // overflow = 0.0167 * 30 = 0.5m
+        // No chain (exit edge 100m > 5m threshold)
+        // offset_m should be exit_offset (0.1) + overflow (0.5) = 0.6
+        sim.step_junction_traversal(0.1);
+
+        let has_jt = sim
+            .world
+            .query_one_mut::<&JunctionTraversal>(agent)
+            .is_ok();
+        assert!(!has_jt, "should exit junction (no chain)");
+
+        let rp = sim
+            .world
+            .query_one_mut::<&RoadPosition>(agent)
+            .unwrap();
+        assert!(
+            rp.offset_m > 0.1,
+            "overflow should be added to exit offset, got {}",
+            rp.offset_m,
+        );
+    }
+
+    #[test]
+    fn chain_t_cap_prevents_teleport_through_junction() {
+        // Regression test: with the old 30m threshold and uncapped t-advance,
+        // an agent chaining through a 20m edge into a 15m-arc junction would
+        // get initial_t ≈ 0.99, effectively teleporting through the entire
+        // second junction. The MAX_CHAIN_T_ADVANCE cap (0.15) ensures the
+        // agent enters near entry_t and visually traverses the junction.
+        let mut g = DiGraph::new();
+        let a = g.add_node(RoadNode { pos: [0.0, 0.0] });
+        let b = g.add_node(RoadNode { pos: [125.0, 0.0] });
+        let j1 = g.add_node(RoadNode { pos: [100.0, 0.0] });
+        let j2 = g.add_node(RoadNode { pos: [103.0, 0.0] }); // 3m intermediate edge
+        let c = g.add_node(RoadNode { pos: [100.0, 50.0] });
+        let d = g.add_node(RoadNode { pos: [103.0, 50.0] });
+
+        let _e0 = g.add_edge(a, j1, test_edge(100.0));
+        let _e1 = g.add_edge(j1, j2, test_edge(3.0)); // short edge triggers chaining
+        let _e2 = g.add_edge(j2, b, test_edge(22.0));
+        let _e3 = g.add_edge(c, j1, test_edge(50.0));
+        let _e4 = g.add_edge(j1, c, test_edge(50.0));
+        let _e5 = g.add_edge(d, j2, test_edge(50.0));
+        let _e6 = g.add_edge(j2, d, test_edge(50.0));
+
+        let graph = RoadGraph::new(g);
+        let j1_id = j1.index() as u32;
+        let j2_id = j2.index() as u32;
+        let mut sim = SimWorld::new_cpu_only(graph);
+
+        let turn_j1 = BezierTurn {
+            entry_edge: 0, exit_edge: 1,
+            p0: [90.0, 0.0], p1: [100.0, 0.0], p2: [101.5, 0.0],
+            arc_length: 11.5, exit_offset_m: 0.1, entry_t: 0.4,
+        };
+        let turn_j1_arm = BezierTurn {
+            entry_edge: 3, exit_edge: 4,
+            p0: [100.0, 45.0], p1: [100.0, 25.0], p2: [100.0, 5.0],
+            arc_length: 40.0, exit_offset_m: 0.1, entry_t: 0.0,
+        };
+        sim.junction_data.insert(j1_id, JunctionData {
+            turns: vec![turn_j1, turn_j1_arm], conflicts: vec![],
+        });
+
+        let turn_j2 = BezierTurn {
+            entry_edge: 1, exit_edge: 2,
+            p0: [101.5, 0.0], p1: [103.0, 0.0], p2: [114.0, 0.0],
+            arc_length: 12.5, exit_offset_m: 0.1, entry_t: 0.3,
+        };
+        let turn_j2_arm = BezierTurn {
+            entry_edge: 5, exit_edge: 6,
+            p0: [103.0, 45.0], p1: [103.0, 25.0], p2: [103.0, 5.0],
+            arc_length: 40.0, exit_offset_m: 0.1, entry_t: 0.0,
+        };
+        sim.junction_data.insert(j2_id, JunctionData {
+            turns: vec![turn_j2, turn_j2_arm], conflicts: vec![],
+        });
+
+        // Agent at high speed near end of junction 1
+        let agent = sim.world.spawn((
+            Position { x: 99.0, y: 0.0 },
+            Kinematics { vx: 15.0, vy: 0.0, speed: 15.0, heading: 0.0 },
+            RoadPosition { edge_index: 0, lane: 0, offset_m: 99.0 },
+            Route { path: vec![0, 2, 3, 1], current_step: 0 },
+            WaitState { stopped_since: -1.0, at_red_signal: false },
+            VehicleType::Car,
+            IdmParams { v0: 13.89, s0: 2.0, t_headway: 1.5, a: 1.0, b: 2.0, delta: 4.0 },
+            JunctionTraversal {
+                junction_node: j1_id, turn_index: 0, t: 0.95,
+                lateral_offset: 3.5, speed: 15.0, wait_ticks: 0,
+            },
+        ));
+
+        sim.step_junction_traversal(0.1);
+
+        let jt = sim.world.query_one_mut::<&JunctionTraversal>(agent).unwrap();
+        assert_eq!(jt.junction_node, j2_id, "should chain to junction 2");
+        // With uncapped logic: overflow ≈ 0.79 + 3 = 3.79m, t = 0.3 + 3.79/12.5 = 0.603
+        // With cap: t = 0.3 + min(3.79/12.5, 0.15) = 0.3 + 0.15 = 0.45
+        assert!(
+            jt.t <= 0.50,
+            "t should be capped to prevent teleporting through junction, got {}",
+            jt.t,
+        );
+        assert!(
+            jt.t >= 0.30,
+            "t should be at least entry_t (0.3), got {}",
+            jt.t,
+        );
     }
 }
