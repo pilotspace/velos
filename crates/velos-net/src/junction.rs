@@ -414,16 +414,23 @@ fn precompute_merged_junction(
     let g = graph.inner();
     let cluster_set: HashSet<NodeIndex> = cluster.iter().copied().collect();
 
-    // Compute cluster centroid (simple average of member positions)
+    // Compute cluster centroid weighted by node degree (in + out).
+    // High-degree nodes are main intersections; low-degree nodes are
+    // side-street stubs. Weighting by degree pulls the centroid toward
+    // the actual road crossing instead of averaging with offset nodes.
     let mut cx = 0.0;
     let mut cy = 0.0;
+    let mut total_weight = 0.0;
     for &node in cluster {
         let pos = g[node].pos;
-        cx += pos[0];
-        cy += pos[1];
+        let degree = (g.edges_directed(node, Direction::Incoming).count()
+            + g.edges_directed(node, Direction::Outgoing).count()) as f64;
+        let w = degree.max(1.0);
+        cx += pos[0] * w;
+        cy += pos[1] * w;
+        total_weight += w;
     }
-    let n = cluster.len() as f64;
-    let centroid = [cx / n, cy / n];
+    let centroid = [cx / total_weight, cy / total_weight];
 
     // Collect peripheral incoming edges (source outside cluster, target inside)
     // and peripheral outgoing edges (source inside cluster, target outside).
