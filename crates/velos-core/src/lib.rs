@@ -9,8 +9,8 @@ pub mod reroute;
 
 pub use cfl::cfl_check;
 pub use components::{
-    CarFollowingModel, GpuAgentState, Kinematics, Position, RoadPosition, Route, VehicleType,
-    WaitState,
+    CarFollowingModel, GpuAgentState, JunctionTraversal, Kinematics, Position, RoadPosition,
+    Route, VehicleType, WaitState, MAX_YIELD_TICKS,
 };
 pub use cost::{
     AgentProfile, CostWeights, EdgeAttributes, RoadClass as CostRoadClass,
