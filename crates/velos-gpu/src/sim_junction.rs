@@ -245,7 +245,7 @@ impl SimWorld {
 
     /// Short edge threshold in metres. Edges shorter than this between two
     /// junctions are traversed instantly (chained) to avoid visible teleporting.
-    const SHORT_EDGE_THRESHOLD_M: f64 = 30.0;
+    const SHORT_EDGE_THRESHOLD_M: f64 = 2.0;
 
     /// Handle junction exit with multi-segment chaining.
     ///

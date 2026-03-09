@@ -17,7 +17,7 @@ use crate::graph::RoadGraph;
 const MIN_ARC_LENGTH_M: f64 = 0.3;
 
 /// Number of sample points for arc-length estimation.
-const ARC_LENGTH_SAMPLES: usize = 20;
+const ARC_LENGTH_SAMPLES: usize = 10;
 
 /// Bezier control point tension: 0.0 = straight line, 1.0 = full centroid.
 const BEZIER_TENSION: f64 = 0.3;

@@ -395,7 +395,19 @@ impl SimWorld {
     }
 
     /// Offset world position perpendicular to heading by lateral offset.
+    ///
+    /// Defense-in-depth: skip junction-traversing agents whose positions are
+    /// Bezier-computed. Calling this on them overwrites correct junction
+    /// positions with stale edge-based coordinates, causing flickering.
     pub(crate) fn apply_lateral_world_offset(&mut self, entity: Entity, lateral_offset: f64) {
+        // Skip junction-traversing agents — their position is Bezier-computed
+        if self
+            .world
+            .query_one_mut::<&JunctionTraversal>(entity)
+            .is_ok()
+        {
+            return;
+        }
         let heading = {
             let kin = self.world.query_one_mut::<&Kinematics>(entity).unwrap();
             kin.heading

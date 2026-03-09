@@ -9,7 +9,8 @@ use hecs::Entity;
 use petgraph::graph::EdgeIndex;
 
 use velos_core::components::{
-    Kinematics, LaneChangeState, LastLaneChange, LateralOffset, RoadPosition, VehicleType,
+    JunctionTraversal, Kinematics, LaneChangeState, LastLaneChange, LateralOffset, RoadPosition,
+    VehicleType,
 };
 use velos_vehicle::idm::IdmParams;
 use velos_vehicle::mobil::{mobil_decision, LaneChangeContext};
@@ -255,10 +256,12 @@ impl SimWorld {
                 &IdmParams,
                 &VehicleType,
                 Option<&LaneChangeState>,
+                Option<&JunctionTraversal>,
             )>()
             .into_iter()
-            .filter(|(_, _, _, _, vt, _)| **vt == VehicleType::Car)
-            .map(|(e, rp, kin, idm, _, lcs)| CarSnap {
+            // Skip junction-traversing agents — they use Bezier curves, not lanes
+            .filter(|(_, _, _, _, vt, _, jt)| **vt == VehicleType::Car && jt.is_none())
+            .map(|(e, rp, kin, idm, _, lcs, _)| CarSnap {
                 entity: e,
                 rp: *rp,
                 speed: kin.speed,
