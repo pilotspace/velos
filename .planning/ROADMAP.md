@@ -150,7 +150,7 @@ Phase 16 first (foundation). Phases 17 + 18 in parallel after 16. Phase 19 after
 | 13. Final Integration Wiring & GPU Transfer Audit | v1.1 | 3/3 | Complete | 2026-03-08 |
 | 14. Wire GTFS → Bus Stops Pipeline | v1.1 | 2/2 | Complete | 2026-03-08 |
 | 15. File Size Reduction & Housekeeping | v1.1 | 3/3 | Complete | 2026-03-08 |
-| 16. Intersection Sublane Model | 2/4 | In Progress|  | - |
+| 16. Intersection Sublane Model | 3/4 | In Progress|  | - |
 | 17. Detection Ingestion & Demand Calibration | v1.2 | 0/? | Not started | - |
 | 18. 3D Rendering Core | v1.2 | 0/? | Not started | - |
 | 19. 3D City Scene | v1.2 | 0/? | Not started | - |
