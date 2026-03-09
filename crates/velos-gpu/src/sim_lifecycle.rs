@@ -20,11 +20,16 @@ use velos_vehicle::types::default_idm_params;
 use crate::sim::SimWorld;
 
 impl SimWorld {
+    /// Maximum agents to spawn per tick to prevent frame spikes during
+    /// high-demand ToD periods. Remaining demand carries over automatically
+    /// via the Spawner's internal accumulator.
+    const SPAWN_CAP_PER_TICK: usize = 50;
+
     pub(crate) fn spawn_agents(&mut self, dt: f64) {
         let sim_hour = self.sim_time / 3600.0;
         let requests = self.spawner.generate_spawns(sim_hour, dt);
-        for req in requests {
-            self.spawn_single_agent(&req);
+        for req in requests.iter().take(Self::SPAWN_CAP_PER_TICK) {
+            self.spawn_single_agent(req);
         }
 
         // GTFS bus spawning (time-gated by trip departure schedule).

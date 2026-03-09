@@ -191,12 +191,13 @@ impl SimWorld {
     const MORNING_RUSH_SECS: f64 = 7.0 * 3600.0;
 
     fn boosted_od() -> OdMatrix {
-        let mut od = OdMatrix::hcmc_5district();
-        let pairs: Vec<_> = od.zone_pairs().collect();
-        for (from, to, count) in pairs {
-            od.set_trips(from, to, count * 3);
-        }
-        od
+        // Use base 5-district OD matrix without multiplier.
+        // The base matrix provides ~140K trips/hr which after ToD scaling
+        // gives ~90-100K concurrent agents -- sufficient for 5-district
+        // coverage and well within the 280K target. The previous 3x
+        // multiplier caused ~420K trips/hr peak that regressed frame time
+        // to ~120ms (GAP-05).
+        OdMatrix::hcmc_5district()
     }
 
     /// Create a fully initialized SimWorld with GPU subsystems.
@@ -299,9 +300,12 @@ impl SimWorld {
         sim.bus_stops = gtfs_bus_stops;
         sim.bus_spawner = bus_spawner;
 
+        let od_trips = Self::boosted_od().total_trips();
         log::info!(
-            "SimWorld initialized: {} signal controllers, perception pipeline ready",
-            sim.signal_controllers.len()
+            "SimWorld initialized: {} signal controllers, perception pipeline ready, \
+             OD total trips/hr={}, spawn cap=50/tick",
+            sim.signal_controllers.len(),
+            od_trips,
         );
 
         sim
@@ -479,9 +483,6 @@ impl SimWorld {
         self.step_lane_changes(dt);
 
         // 7. GPU wave-front car-following physics
-        let _snapshot = AgentSnapshot::collect(&self.world);
-        let _spatial = SpatialIndex::from_positions(&_snapshot.ids, &_snapshot.positions);
-
         self.step_vehicles_gpu(dt as f32, device, queue, dispatcher);
 
         // 7.5. Motorbike sublane lateral filtering (CPU, uses updated positions)
