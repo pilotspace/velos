@@ -703,10 +703,20 @@ impl Renderer {
         let color = [1.0_f32, 1.0, 1.0, 0.3]; // semi-transparent white
         let mut vertices: Vec<GuideLineVertex> = Vec::new();
 
+        // Deduplicate: merged junction clusters share the same JunctionData
+        // across multiple node keys. Track seen (entry_edge, exit_edge) pairs
+        // to avoid rendering the same Bezier curve multiple times.
+        let mut seen_turns: std::collections::HashSet<(u32, u32)> =
+            std::collections::HashSet::new();
+
         for jd in junction_data.values() {
             for turn in &jd.turns {
                 // Skip degenerate arcs (already filtered in precompute, but safety net).
                 if turn.arc_length < 1.0 {
+                    continue;
+                }
+                // Skip duplicate turns from merged clusters
+                if !seen_turns.insert((turn.entry_edge, turn.exit_edge)) {
                     continue;
                 }
 
@@ -806,9 +816,22 @@ impl Renderer {
         let dot_size = 1.0_f32; // half-size of conflict dot quad
 
         let mut vertices: Vec<GuideLineVertex> = Vec::new();
+        // Deduplicate conflict points from merged junction clusters
+        let mut seen_conflicts: std::collections::HashSet<(u32, u32, u32, u32)> =
+            std::collections::HashSet::new();
 
         for jd in junction_data.values() {
             for cp in &jd.conflicts {
+                // Use turn edge pairs as dedup key
+                let key = (
+                    jd.turns.get(cp.turn_a_idx as usize).map(|t| t.entry_edge).unwrap_or(u32::MAX),
+                    jd.turns.get(cp.turn_a_idx as usize).map(|t| t.exit_edge).unwrap_or(u32::MAX),
+                    jd.turns.get(cp.turn_b_idx as usize).map(|t| t.entry_edge).unwrap_or(u32::MAX),
+                    jd.turns.get(cp.turn_b_idx as usize).map(|t| t.exit_edge).unwrap_or(u32::MAX),
+                );
+                if !seen_conflicts.insert(key) {
+                    continue;
+                }
                 let turn_a = match jd.turns.get(cp.turn_a_idx as usize) {
                     Some(t) => t,
                     None => continue,

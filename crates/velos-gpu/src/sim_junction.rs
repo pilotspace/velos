@@ -429,7 +429,12 @@ impl SimWorld {
         self.update_wait_state(entity, speed, false);
     }
 
-    /// Check if the exit edge is short and the next node has a junction to chain into.
+    /// Check if the exit edge can be chained into the next junction.
+    ///
+    /// Chaining is allowed when:
+    /// 1. The exit edge is an **internal edge** of a merged junction cluster
+    ///    (always chainable, regardless of length), OR
+    /// 2. The exit edge is short (< `SHORT_EDGE_THRESHOLD_M`).
     ///
     /// If chaining is possible, adds the intermediate edge length to `overflow_m`
     /// so the caller can pre-advance the next Bezier (smooth transition).
@@ -442,23 +447,25 @@ impl SimWorld {
         exit_edge_id: u32,
         overflow_m: &mut f64,
     ) -> Option<(u32, u16, BezierTurn, f64)> {
-        // Check exit edge length
         let exit_edge_idx = EdgeIndex::new(exit_edge_id as usize);
         let g = self.road_graph.inner();
         let edge_weight = g.edge_weight(exit_edge_idx)?;
-        if edge_weight.length_m > Self::SHORT_EDGE_THRESHOLD_M {
+
+        // Check if this edge is internal to a merged cluster (always chainable)
+        // or short enough for legacy chaining.
+        let is_internal = self
+            .junction_data
+            .values()
+            .any(|jd| jd.internal_edges.contains(&exit_edge_id));
+
+        if !is_internal && edge_weight.length_m > Self::SHORT_EDGE_THRESHOLD_M {
             return None;
         }
 
-        // NOTE: edge_length is added to overflow_m only AFTER confirming
-        // the chain succeeds (see bottom of function). Adding it here
-        // would corrupt overflow when the function returns None later.
         let edge_length = edge_weight.length_m;
 
         // Get next-next node from route
         let route = self.world.query_one_mut::<&Route>(entity).ok()?;
-        // After the route step advance, current_step points to the next node.
-        // We need current_step + 1 (the node after the short edge).
         if route.current_step + 2 >= route.path.len() {
             return None;
         }
@@ -474,15 +481,38 @@ impl SimWorld {
             .index() as u32;
 
         // Find matching turn: exit_edge -> next_next_edge
+        // For merged clusters, the turn's entry_edge may be the peripheral edge
+        // that enters the cluster, not this internal edge. Walk forward through
+        // internal edges to find the peripheral entry this agent originally used.
         let (turn_idx, turn) = next_jd
             .turns
             .iter()
             .enumerate()
-            .find(|(_, t)| t.entry_edge == exit_edge_id && t.exit_edge == next_next_edge)?;
+            .find(|(_, t)| t.entry_edge == exit_edge_id && t.exit_edge == next_next_edge)
+            .or_else(|| {
+                // For merged clusters, the next junction data is the SAME as the
+                // current one (all cluster nodes share it). The matching turn
+                // might use the original peripheral entry edge, not the internal
+                // exit edge. Look up the agent's current junction traversal to
+                // find the original entry edge.
+                if !is_internal {
+                    return None;
+                }
+                let jt = self.world.query_one_mut::<&JunctionTraversal>(entity).ok()?;
+                let current_jd = self.junction_data.get(&jt.junction_node)?;
+                let current_turn = current_jd.turns.get(jt.turn_index as usize)?;
+                let original_entry = current_turn.entry_edge;
+                // Find a turn matching original_entry -> next_next_edge
+                next_jd
+                    .turns
+                    .iter()
+                    .enumerate()
+                    .find(|(_, t)| t.entry_edge == original_entry && t.exit_edge == next_next_edge)
+            })?;
 
         let road_half_width = edge_weight.lane_count as f64 * 3.5 / 2.0;
 
-        // Chain confirmed — now safe to add intermediate edge distance
+        // Chain confirmed — add intermediate edge distance
         *overflow_m += edge_length;
 
         Some((next_node_u32, turn_idx as u16, turn.clone(), road_half_width))
@@ -557,6 +587,7 @@ mod tests {
         let jd = JunctionData {
             turns: vec![turn.clone()],
             conflicts: vec![],
+            internal_edges: std::collections::HashSet::new(),
         };
 
         sim.junction_data.insert(junction_node, jd);
@@ -725,6 +756,7 @@ mod tests {
         let jd = JunctionData {
             turns: vec![turn_0, turn_1],
             conflicts: vec![conflict],
+            internal_edges: std::collections::HashSet::new(),
         };
         sim.junction_data.insert(junction_node, jd);
 
@@ -905,6 +937,7 @@ mod tests {
         sim.junction_data.insert(j1_id, JunctionData {
             turns: vec![turn_j1, turn_j1_extra],
             conflicts: vec![],
+            internal_edges: std::collections::HashSet::new(),
         });
 
         // Junction 2: turn from edge1 -> edge2
@@ -931,6 +964,7 @@ mod tests {
         sim.junction_data.insert(j2_id, JunctionData {
             turns: vec![turn_j2, turn_j2_extra],
             conflicts: vec![],
+            internal_edges: std::collections::HashSet::new(),
         });
 
         (sim, j1_id, j2_id)
@@ -1028,6 +1062,7 @@ mod tests {
         sim.junction_data.insert(j1_id, JunctionData {
             turns: vec![turn_no_chain],
             conflicts: vec![],
+            internal_edges: std::collections::HashSet::new(),
         });
 
         // Agent near Bezier end, high speed to create overflow
@@ -1134,6 +1169,7 @@ mod tests {
         };
         sim.junction_data.insert(j1_id, JunctionData {
             turns: vec![turn_j1, turn_j1_arm], conflicts: vec![],
+            internal_edges: std::collections::HashSet::new(),
         });
 
         let turn_j2 = BezierTurn {
@@ -1148,6 +1184,7 @@ mod tests {
         };
         sim.junction_data.insert(j2_id, JunctionData {
             turns: vec![turn_j2, turn_j2_arm], conflicts: vec![],
+            internal_edges: std::collections::HashSet::new(),
         });
 
         // Agent at high speed near end of junction 1

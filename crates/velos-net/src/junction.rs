@@ -3,8 +3,14 @@
 //! Each junction node in the road graph gets a set of precomputed quadratic
 //! Bezier curves (one per valid entry/exit edge pair) and conflict points
 //! where those curves cross within a threshold distance.
+//!
+//! **Close-junction merging:** When two junction nodes are within
+//! [`MERGE_DISTANCE_M`], they are merged into a single cluster with a shared
+//! centroid. Turns are computed only for *peripheral* edges (edges whose other
+//! endpoint is outside the cluster), eliminating the sharp Bezier discontinuities
+//! that cause teleportation between closely-spaced junctions.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
@@ -25,6 +31,11 @@ const ARC_LENGTH_SAMPLES: usize = 10;
 /// centroid along approach/departure directions, keeping curves short (~2*radius)
 /// so agents don't teleport to the far end of connected edges on junction entry.
 const JUNCTION_RADIUS_M: f64 = 15.0;
+
+/// Maximum distance (metres) between two junction nodes for them to be merged
+/// into a single cluster. Set to `2 * JUNCTION_RADIUS_M` so overlapping Bezier
+/// curves are unified rather than fighting each other.
+const MERGE_DISTANCE_M: f64 = 30.0;
 
 /// Number of sample steps per curve for conflict detection grid search.
 const CONFLICT_SEARCH_STEPS: usize = 30;
@@ -129,6 +140,10 @@ pub struct JunctionData {
     pub turns: Vec<BezierTurn>,
     /// All pairwise conflict points between turns.
     pub conflicts: Vec<ConflictPoint>,
+    /// Edge indices that are *internal* to a merged cluster (both endpoints are
+    /// cluster members). Agents on these edges skip normal physics and chain
+    /// directly into the merged junction. Empty for single-node junctions.
+    pub internal_edges: HashSet<u32>,
 }
 
 /// Estimate the arc length of a quadratic Bezier curve by sampling `steps` points
@@ -331,7 +346,217 @@ pub fn precompute_junction(
         }
     }
 
-    JunctionData { turns, conflicts }
+    JunctionData {
+        turns,
+        conflicts,
+        internal_edges: HashSet::new(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Union-Find for clustering close junction nodes
+// ---------------------------------------------------------------------------
+
+/// Minimal Union-Find (disjoint-set) with path compression and union by rank.
+struct UnionFind {
+    parent: Vec<usize>,
+    rank: Vec<u8>,
+}
+
+impl UnionFind {
+    fn new(n: usize) -> Self {
+        Self {
+            parent: (0..n).collect(),
+            rank: vec![0; n],
+        }
+    }
+
+    fn find(&mut self, mut x: usize) -> usize {
+        while self.parent[x] != x {
+            self.parent[x] = self.parent[self.parent[x]]; // path halving
+            x = self.parent[x];
+        }
+        x
+    }
+
+    fn union(&mut self, a: usize, b: usize) {
+        let ra = self.find(a);
+        let rb = self.find(b);
+        if ra == rb {
+            return;
+        }
+        if self.rank[ra] < self.rank[rb] {
+            self.parent[ra] = rb;
+        } else if self.rank[ra] > self.rank[rb] {
+            self.parent[rb] = ra;
+        } else {
+            self.parent[rb] = ra;
+            self.rank[ra] += 1;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Merged-cluster junction precomputation
+// ---------------------------------------------------------------------------
+
+/// Precompute junction data for a merged cluster of close junction nodes.
+///
+/// The cluster centroid is the average position of all member nodes.
+/// Only *peripheral* edges are used for turns — edges where the other endpoint
+/// is **not** in the cluster. Internal edges (both endpoints in cluster) are
+/// recorded in `JunctionData::internal_edges` so the traversal system can
+/// chain through them without edge-based physics.
+fn precompute_merged_junction(
+    graph: &RoadGraph,
+    cluster: &[NodeIndex],
+) -> JunctionData {
+    let g = graph.inner();
+    let cluster_set: HashSet<NodeIndex> = cluster.iter().copied().collect();
+
+    // Compute cluster centroid (simple average of member positions)
+    let mut cx = 0.0;
+    let mut cy = 0.0;
+    for &node in cluster {
+        let pos = g[node].pos;
+        cx += pos[0];
+        cy += pos[1];
+    }
+    let n = cluster.len() as f64;
+    let centroid = [cx / n, cy / n];
+
+    // Collect peripheral incoming edges (source outside cluster, target inside)
+    // and peripheral outgoing edges (source inside cluster, target outside).
+    // Also collect internal edge IDs.
+    struct PeripheralEdge {
+        edge_id: u32,
+        outer_node_pos: [f64; 2],
+    }
+
+    let mut incoming: Vec<PeripheralEdge> = Vec::new();
+    let mut outgoing: Vec<PeripheralEdge> = Vec::new();
+    let mut internal_edges: HashSet<u32> = HashSet::new();
+
+    for &node in cluster {
+        for edge_ref in g.edges_directed(node, Direction::Incoming) {
+            let edge_id = edge_ref.id().index() as u32;
+            if cluster_set.contains(&edge_ref.source()) {
+                internal_edges.insert(edge_id);
+            } else {
+                incoming.push(PeripheralEdge {
+                    edge_id,
+                    outer_node_pos: g[edge_ref.source()].pos,
+                });
+            }
+        }
+        for edge_ref in g.edges_directed(node, Direction::Outgoing) {
+            let edge_id = edge_ref.id().index() as u32;
+            if cluster_set.contains(&edge_ref.target()) {
+                internal_edges.insert(edge_id);
+            } else {
+                outgoing.push(PeripheralEdge {
+                    edge_id,
+                    outer_node_pos: g[edge_ref.target()].pos,
+                });
+            }
+        }
+    }
+
+    // Deduplicate edges (a single edge may be seen from both endpoints in the cluster)
+    let mut seen_in = HashSet::new();
+    incoming.retain(|e| seen_in.insert(e.edge_id));
+    let mut seen_out = HashSet::new();
+    outgoing.retain(|e| seen_out.insert(e.edge_id));
+
+    // Build Bezier turns for all (peripheral_incoming, peripheral_outgoing) pairs
+    let mut turns = Vec::new();
+
+    for inc in &incoming {
+        for out in &outgoing {
+            // Skip U-turns: same outer node
+            if inc.outer_node_pos == out.outer_node_pos {
+                continue;
+            }
+
+            let source_pos = inc.outer_node_pos;
+            let target_pos = out.outer_node_pos;
+
+            // P0: radius back from centroid along incoming approach direction
+            let approach = [centroid[0] - source_pos[0], centroid[1] - source_pos[1]];
+            let approach_len =
+                (approach[0] * approach[0] + approach[1] * approach[1]).sqrt();
+            let radius0 = JUNCTION_RADIUS_M.min(approach_len * 0.5);
+            let p0 = if approach_len > 0.01 {
+                [
+                    centroid[0] - (approach[0] / approach_len) * radius0,
+                    centroid[1] - (approach[1] / approach_len) * radius0,
+                ]
+            } else {
+                centroid
+            };
+
+            // P2: radius forward from centroid along departure direction
+            let depart = [target_pos[0] - centroid[0], target_pos[1] - centroid[1]];
+            let depart_len =
+                (depart[0] * depart[0] + depart[1] * depart[1]).sqrt();
+            let radius2 = JUNCTION_RADIUS_M.min(depart_len * 0.5);
+            let p2 = if depart_len > 0.01 {
+                [
+                    centroid[0] + (depart[0] / depart_len) * radius2,
+                    centroid[1] + (depart[1] / depart_len) * radius2,
+                ]
+            } else {
+                centroid
+            };
+
+            // P1 so B(0.5) = centroid
+            let p1 = [
+                2.0 * centroid[0] - 0.5 * (p0[0] + p2[0]),
+                2.0 * centroid[1] - 0.5 * (p0[1] + p2[1]),
+            ];
+
+            let arc_length = estimate_arc_length(&p0, &p1, &p2, ARC_LENGTH_SAMPLES);
+            if arc_length < MIN_ARC_LENGTH_M {
+                continue;
+            }
+
+            let mut turn = BezierTurn {
+                entry_edge: inc.edge_id,
+                exit_edge: out.edge_id,
+                p0,
+                p1,
+                p2,
+                arc_length,
+                exit_offset_m: radius2.max(0.1),
+                entry_t: 0.0,
+            };
+            turn.entry_t = find_closest_t(&turn, centroid, ARC_LENGTH_SAMPLES);
+            turns.push(turn);
+        }
+    }
+
+    // Find conflict points between all turn pairs
+    let mut conflicts = Vec::new();
+    for i in 0..turns.len() {
+        for j in (i + 1)..turns.len() {
+            if let Some((ta, tb)) =
+                find_conflict_point(&turns[i], &turns[j], CONFLICT_SEARCH_STEPS)
+            {
+                conflicts.push(ConflictPoint {
+                    turn_a_idx: i as u16,
+                    turn_b_idx: j as u16,
+                    t_a: ta,
+                    t_b: tb,
+                });
+            }
+        }
+    }
+
+    JunctionData {
+        turns,
+        conflicts,
+        internal_edges,
+    }
 }
 
 /// Precompute junction geometry for all junction nodes in the road graph.
@@ -340,31 +565,90 @@ pub fn precompute_junction(
 /// AND is not a pass-through node (in_degree == 1 AND out_degree == 1).
 /// Pass-through nodes are road continuations, not true junctions.
 ///
+/// **Close-junction merging:** Junction nodes within [`MERGE_DISTANCE_M`] of
+/// each other are merged into clusters. Each cluster shares a single
+/// [`JunctionData`] with a combined centroid and turns from peripheral edges
+/// only, eliminating Bezier discontinuities between closely-spaced junctions.
+///
 /// Returns a map from node index (as u32) to precomputed [`JunctionData`].
 pub fn precompute_all_junctions(graph: &RoadGraph) -> HashMap<u32, JunctionData> {
     let g = graph.inner();
-    let mut result = HashMap::new();
 
+    // Step 1: Identify junction nodes
+    let mut junction_nodes: Vec<NodeIndex> = Vec::new();
     for node in g.node_indices() {
         let in_degree = g.edges_directed(node, Direction::Incoming).count();
         let out_degree = g.edges_directed(node, Direction::Outgoing).count();
-
-        // Must have both incoming and outgoing edges
         if in_degree == 0 || out_degree == 0 {
             continue;
         }
-
-        // Filter pass-through nodes (lesson #1): in_degree==1 AND out_degree==1
-        // are road continuations, not junctions
         if in_degree == 1 && out_degree == 1 {
             continue;
         }
+        junction_nodes.push(node);
+    }
 
-        let data = precompute_junction(graph, node);
+    if junction_nodes.is_empty() {
+        return HashMap::new();
+    }
 
-        // Only store if there are valid turns
-        if !data.turns.is_empty() {
-            result.insert(node.index() as u32, data);
+    // Step 2: Cluster close junction nodes using Union-Find.
+    // Build index map: NodeIndex -> position in junction_nodes vec.
+    let idx_map: HashMap<usize, usize> = junction_nodes
+        .iter()
+        .enumerate()
+        .map(|(i, n)| (n.index(), i))
+        .collect();
+
+    let mut uf = UnionFind::new(junction_nodes.len());
+
+    // Only check edges between junction nodes (O(E) not O(N^2))
+    for (i, &node) in junction_nodes.iter().enumerate() {
+        let pos_a = g[node].pos;
+        for edge_ref in g.edges_directed(node, Direction::Outgoing) {
+            let target = edge_ref.target();
+            if let Some(&j) = idx_map.get(&target.index()) {
+                let pos_b = g[target].pos;
+                let dx = pos_a[0] - pos_b[0];
+                let dy = pos_a[1] - pos_b[1];
+                let dist = (dx * dx + dy * dy).sqrt();
+                if dist < MERGE_DISTANCE_M {
+                    uf.union(i, j);
+                }
+            }
+        }
+    }
+
+    // Step 3: Group into clusters
+    let mut clusters: HashMap<usize, Vec<NodeIndex>> = HashMap::new();
+    for (i, &node) in junction_nodes.iter().enumerate() {
+        let root = uf.find(i);
+        clusters.entry(root).or_default().push(node);
+    }
+
+    // Step 4: Compute junction data per cluster
+    let mut result = HashMap::new();
+
+    for (_root, cluster) in &clusters {
+        let data = if cluster.len() == 1 {
+            // Single-node junction — use original logic
+            let d = precompute_junction(graph, cluster[0]);
+            if d.turns.is_empty() {
+                continue;
+            }
+            d
+        } else {
+            // Merged cluster — compute combined junction
+            let d = precompute_merged_junction(graph, cluster);
+            if d.turns.is_empty() {
+                continue;
+            }
+            d
+        };
+
+        // Map ALL nodes in the cluster to the same JunctionData
+        for &node in cluster {
+            result.insert(node.index() as u32, data.clone());
         }
     }
 
@@ -826,5 +1110,126 @@ mod tests {
             assert!(ta.is_finite());
             assert!(tb.is_finite());
         }
+    }
+
+    // ---- Close-junction merging tests ----
+
+    /// Build two close junctions (20m apart) connected by a short edge.
+    ///
+    /// ```text
+    ///    A (0,0) --> J1 (100,0) --> J2 (120,0) --> B (220,0)
+    ///                  ^                ^
+    ///    C (100,100)---+   D (120,100)--+
+    /// ```
+    fn build_close_junction_pair() -> (RoadGraph, NodeIndex, NodeIndex) {
+        let mut g = DiGraph::new();
+        let a = g.add_node(RoadNode { pos: [0.0, 0.0] });
+        let j1 = g.add_node(RoadNode { pos: [100.0, 0.0] });
+        let j2 = g.add_node(RoadNode { pos: [120.0, 0.0] });
+        let b = g.add_node(RoadNode { pos: [220.0, 0.0] });
+        let c = g.add_node(RoadNode { pos: [100.0, 100.0] });
+        let d = g.add_node(RoadNode { pos: [120.0, 100.0] });
+
+        // Edges making j1 and j2 junctions (in>1 or out>1)
+        g.add_edge(a, j1, test_edge(100.0));
+        g.add_edge(j1, j2, test_edge(20.0)); // short internal edge
+        g.add_edge(j2, b, test_edge(100.0));
+        g.add_edge(c, j1, test_edge(100.0));
+        g.add_edge(d, j2, test_edge(100.0));
+        // Outgoing from j1/j2 to make them true junctions
+        g.add_edge(j1, c, test_edge(100.0));
+        g.add_edge(j2, d, test_edge(100.0));
+
+        (RoadGraph::new(g), j1, j2)
+    }
+
+    #[test]
+    fn close_junctions_merged_into_cluster() {
+        let (graph, j1, j2) = build_close_junction_pair();
+        let junctions = precompute_all_junctions(&graph);
+
+        // Both j1 and j2 should map to the same JunctionData
+        let j1_data = junctions.get(&(j1.index() as u32));
+        let j2_data = junctions.get(&(j2.index() as u32));
+        assert!(j1_data.is_some(), "j1 should have junction data");
+        assert!(j2_data.is_some(), "j2 should have junction data");
+
+        // Same data (shared clone) — same number of turns
+        let d1 = j1_data.unwrap();
+        let d2 = j2_data.unwrap();
+        assert_eq!(d1.turns.len(), d2.turns.len());
+    }
+
+    #[test]
+    fn merged_cluster_has_internal_edges() {
+        let (graph, j1, _j2) = build_close_junction_pair();
+        let junctions = precompute_all_junctions(&graph);
+        let data = junctions.get(&(j1.index() as u32)).unwrap();
+
+        // The j1->j2 edge (20m, within MERGE_DISTANCE_M) should be internal
+        assert!(
+            !data.internal_edges.is_empty(),
+            "merged cluster should have internal edges"
+        );
+    }
+
+    #[test]
+    fn merged_cluster_turns_use_peripheral_edges_only() {
+        let (graph, j1, _j2) = build_close_junction_pair();
+        let junctions = precompute_all_junctions(&graph);
+        let data = junctions.get(&(j1.index() as u32)).unwrap();
+
+        for turn in &data.turns {
+            assert!(
+                !data.internal_edges.contains(&turn.entry_edge),
+                "turn entry_edge {} should not be internal",
+                turn.entry_edge
+            );
+            assert!(
+                !data.internal_edges.contains(&turn.exit_edge),
+                "turn exit_edge {} should not be internal",
+                turn.exit_edge
+            );
+        }
+    }
+
+    #[test]
+    fn distant_junctions_not_merged() {
+        // Two junctions 200m apart — should NOT merge
+        let mut g = DiGraph::new();
+        let a = g.add_node(RoadNode { pos: [0.0, 0.0] });
+        let j1 = g.add_node(RoadNode { pos: [100.0, 0.0] });
+        let j2 = g.add_node(RoadNode { pos: [300.0, 0.0] });
+        let b = g.add_node(RoadNode { pos: [400.0, 0.0] });
+        let c = g.add_node(RoadNode { pos: [100.0, 100.0] });
+        let d = g.add_node(RoadNode { pos: [300.0, 100.0] });
+
+        g.add_edge(a, j1, test_edge(100.0));
+        g.add_edge(j1, j2, test_edge(200.0));
+        g.add_edge(j2, b, test_edge(100.0));
+        g.add_edge(c, j1, test_edge(100.0));
+        g.add_edge(d, j2, test_edge(100.0));
+        g.add_edge(j1, c, test_edge(100.0));
+        g.add_edge(j2, d, test_edge(100.0));
+
+        let graph = RoadGraph::new(g);
+        let junctions = precompute_all_junctions(&graph);
+
+        let d1 = junctions.get(&(j1.index() as u32)).unwrap();
+        let d2 = junctions.get(&(j2.index() as u32)).unwrap();
+        // Distant junctions should have separate data with no internal edges
+        assert!(d1.internal_edges.is_empty());
+        assert!(d2.internal_edges.is_empty());
+    }
+
+    #[test]
+    fn union_find_basic() {
+        let mut uf = UnionFind::new(5);
+        uf.union(0, 1);
+        uf.union(2, 3);
+        assert_eq!(uf.find(0), uf.find(1));
+        assert_ne!(uf.find(0), uf.find(2));
+        uf.union(1, 3);
+        assert_eq!(uf.find(0), uf.find(3));
     }
 }

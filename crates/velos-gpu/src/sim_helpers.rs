@@ -192,18 +192,38 @@ impl SimWorld {
 
                 // Check for junction traversal intercept
                 if let Some(junction_data) = self.junction_data.get(&target_node_u32) {
+                    // Clone internal_edges upfront to avoid borrow conflict
+                    // with &mut self in resolve_peripheral_exit_with.
+                    let internal_edges = junction_data.internal_edges.clone();
+
                     // Get current edge to find the matching turn
                     let current_edge_id = {
                         let rp = self.world.query_one_mut::<&RoadPosition>(entity).unwrap();
                         rp.edge_index
                     };
 
-                    // Find the BezierTurn matching (current_edge -> next_edge)
+                    // For merged clusters, `next_edge_id` may be an internal edge.
+                    // Walk forward through internal edges to find the peripheral
+                    // exit edge that the merged junction's turns reference.
+                    let (effective_exit_edge, extra_steps) =
+                        self.resolve_peripheral_exit_with(
+                            entity,
+                            next_edge_id,
+                            &internal_edges,
+                            new_step,
+                        );
+
+                    // Re-borrow junction data after mutable self usage
+                    let junction_data = self.junction_data.get(&target_node_u32).unwrap();
+
+                    // Find the BezierTurn matching (current_edge -> peripheral_exit)
                     let turn_match = junction_data
                         .turns
                         .iter()
                         .enumerate()
-                        .find(|(_, t)| t.entry_edge == current_edge_id && t.exit_edge == next_edge_id);
+                        .find(|(_, t)| {
+                            t.entry_edge == current_edge_id && t.exit_edge == effective_exit_edge
+                        });
 
                     if let Some((turn_index, turn)) = turn_match {
                         // Approach-phase gap acceptance: check if foe agents in junction
@@ -258,7 +278,10 @@ impl SimWorld {
                         let t_advance = (overflow / turn.arc_length.max(1.0)).min(0.15);
                         let initial_t = (turn.entry_t + t_advance).min(0.99);
 
-                        // Attach JunctionTraversal component
+                        // Attach JunctionTraversal component.
+                        // For merged clusters, advance the route past internal
+                        // edges so the agent's route step points to the
+                        // peripheral exit node (not an internal cluster node).
                         let _ = self.world.insert_one(
                             entity,
                             JunctionTraversal {
@@ -270,6 +293,13 @@ impl SimWorld {
                                 wait_ticks: 0,
                             },
                         );
+                        if extra_steps > 0 {
+                            if let Ok(route) =
+                                self.world.query_one_mut::<&mut Route>(entity)
+                            {
+                                route.current_step += extra_steps;
+                            }
+                        }
 
                         // Immediately set Position to Bezier(initial_t) so there
                         // is no one-frame stale position at edge-end coordinates.
@@ -324,6 +354,67 @@ impl SimWorld {
                 false
             }
         }
+    }
+
+    /// Walk forward through internal edges of a merged cluster to find the
+    /// first peripheral exit edge.
+    ///
+    /// Returns `(peripheral_exit_edge_id, extra_route_steps)` where
+    /// `extra_route_steps` is the number of internal edges skipped (0 if
+    /// `candidate_edge` is already peripheral).
+    /// Walk forward through internal edges of a merged cluster to find the
+    /// first peripheral exit edge.
+    ///
+    /// Returns `(peripheral_exit_edge_id, extra_route_steps)` where
+    /// `extra_route_steps` is the number of internal edges skipped (0 if
+    /// `candidate_edge` is already peripheral).
+    ///
+    /// Takes `internal_edges` by reference (borrowed from junction data before
+    /// calling) to avoid borrow conflicts with `&mut self`.
+    fn resolve_peripheral_exit_with(
+        &mut self,
+        entity: Entity,
+        candidate_edge: u32,
+        internal_edges: &std::collections::HashSet<u32>,
+        base_step: usize,
+    ) -> (u32, usize) {
+        if !internal_edges.contains(&candidate_edge) {
+            return (candidate_edge, 0);
+        }
+
+        // Read the route path to walk forward
+        let route_path: Vec<u32> = match self.world.query_one_mut::<&Route>(entity) {
+            Ok(r) => r.path.clone(),
+            Err(_) => return (candidate_edge, 0),
+        };
+
+        let g = self.road_graph.inner();
+        let mut edge_id = candidate_edge;
+        let mut steps = 0;
+        let max_walk = 5; // safety limit
+        let mut walk_step = base_step;
+
+        while steps < max_walk {
+            if walk_step + 2 >= route_path.len() {
+                break;
+            }
+            let from = NodeIndex::new(route_path[walk_step + 1] as usize);
+            let to = NodeIndex::new(route_path[walk_step + 2] as usize);
+            let next_edge = match g.find_edge(from, to) {
+                Some(e) => e.index() as u32,
+                None => break,
+            };
+
+            steps += 1;
+            walk_step += 1;
+            edge_id = next_edge;
+
+            if !internal_edges.contains(&next_edge) {
+                return (next_edge, steps);
+            }
+        }
+
+        (edge_id, steps)
     }
 
     /// Check if entering a junction is blocked by foe agents already inside.
