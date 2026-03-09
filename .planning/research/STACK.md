@@ -1,315 +1,306 @@
-# Stack Research: v1.1 Digital Twin Platform
+# Stack Research: Camera CV Detection + 3D Native Rendering
 
-**Domain:** GPU-accelerated traffic microsimulation -- scaling from desktop POC to web-based digital twin platform
-**Researched:** 2026-03-07
-**Confidence:** HIGH (core libraries verified via crates.io, official docs, and release notes)
+**Domain:** Camera-based vehicle/pedestrian detection pipeline and 3D wgpu city visualization for GPU-accelerated traffic microsimulation
+**Researched:** 2026-03-09
+**Confidence:** MEDIUM-HIGH (core crates verified via crates.io API and official repos; some integration patterns are LOW confidence due to limited Rust-specific precedent)
 
 ## Scope
 
-This document covers ONLY the stack additions and changes needed for v1.1. The v1.0 validated stack (Rust nightly, wgpu, hecs, petgraph, rstar, egui) is NOT re-researched. See the v1.0 STACK.md in git history for that analysis.
+This document covers ONLY the stack additions needed for two new capabilities:
 
-## Existing Stack -- Version Updates Required
+1. **Camera CV Pipeline** -- RTSP camera feed ingestion, video decoding, YOLO-based vehicle/pedestrian detection, demand calibration feedback loop
+2. **3D Native Rendering** -- wgpu-based 3D city visualization with OSM building extrusion, glTF vehicle models, terrain/DEM, replacing the current 2D GPU-instanced rendering
 
-These are already in the workspace but need version bumps for v1.1:
+The existing v1.0 stack (Rust nightly 2024 edition, wgpu 27, hecs, petgraph, rstar, egui, winit, glam, rayon) and v1.1 additions (tonic, axum, parquet, etc.) are NOT re-researched.
 
-| Technology | v1.0 Version | v1.1 Target | Change Reason |
-|------------|-------------|-------------|---------------|
-| wgpu | 27 | 28.0.0 | Multi-GPU improvements, better compute dispatch. Already specified in arch docs. |
-| tokio | (implicit) | 1.50.0 (LTS: 1.47.x) | Required by tonic 0.14 and axum 0.8. Use LTS 1.47.x for stability. |
-| rayon | (implicit) | 1.11.0 | CCH construction parallelism, staggered reroute parallelism. |
-| glam | 0.29 | 0.29 | No change needed. Still used for CPU-side vector math. |
-| arc-swap | (not in v1.0) | 1.8.2 | Prediction overlay atomic swap pattern (ArcSwap<PredictionOverlay>). |
-| serde | (not in workspace) | 1.0.228 | Required by parquet, postcard, serde_json, flatbuffers, and checkpoint metadata. |
+---
 
-## New Rust Crate Additions
+## Part 1: Camera CV Detection Pipeline
 
-### API Server Layer
+### ML Inference Runtime
 
-| Crate | Version | Purpose | Integration Point |
-|-------|---------|---------|-------------------|
-| tonic | 0.14.3 | gRPC server for simulation control | velos-api crate. Defines VelosSimulation service per 05-visualization-api.md proto contract. Shares tokio runtime with axum. |
-| tonic-build | 0.14.x | Protobuf codegen from .proto files | Build script in velos-api. Generates Rust types from proto/velos/v2/*.proto. |
-| prost | 0.13.x | Protobuf runtime (required by tonic) | Auto-included via tonic. Message serialization/deserialization. |
-| axum | 0.8.8 | REST + WebSocket gateway | velos-api crate. REST routes (GET /api/v1/status, etc.) and WebSocket relay for tile-based frame streaming. Path syntax: /{param}. |
-| axum-extra | 0.10.x | WebSocket utilities, typed headers | WebSocket upgrade handling for tile-based pub/sub relay per 05-visualization-api.md. |
-| tower | 0.5.x | Middleware (timeout, rate-limit, tracing) | Shared middleware between tonic and axum. Both are tower-based. |
-| tower-http | 0.6.x | HTTP-specific middleware (CORS, compression) | CORS headers for deck.gl dashboard requests. Compression for REST responses. |
+| Crate | Version | Purpose | Why Recommended |
+|-------|---------|---------|-----------------|
+| ort | 2.0.0-rc.12 | ONNX Runtime bindings for ML model inference | The dominant Rust ML inference crate (6.8M downloads). Wraps Microsoft ONNX Runtime which supports CoreML execution provider for macOS Apple Silicon GPU acceleration. Production-ready despite RC status -- pykeio recommends it for new projects. Supports YOLO models exported from PyTorch via ONNX. |
 
-**Why tonic 0.14 (not 0.12):** v1.0 STACK.md listed tonic 0.12.x, but 0.14.3 is the current stable release. The jump from 0.12 to 0.14 includes performance improvements and better error types. No breaking API changes for our use case.
+**Why ort over alternatives:**
 
-**Why axum 0.8 (not 0.7):** axum 0.8 released Jan 2025, is current stable. New path syntax /{param}. Drops #[async_trait] requirement. Matches tokio ecosystem version expectations.
+| Recommended | Alternative | Why Not |
+|-------------|-------------|---------|
+| ort (ONNX Runtime) | tract | tract is pure-Rust and CPU-only (no Metal/CoreML GPU acceleration). For YOLO at 10-30 FPS on camera feeds, CPU-only inference is too slow. tract is better for lightweight models or WASM targets. |
+| ort (ONNX Runtime) | candle | candle (Hugging Face) is optimized for LLM/transformer workloads, not object detection. Metal support exists via metal-candle but the YOLO model zoo is ONNX-native, not candle-native. Would require porting model weights. |
+| ort (ONNX Runtime) | tch-rs | tch-rs wraps libtorch (PyTorch C++). Massive binary (~2GB), poor macOS Metal support, complex build. ONNX Runtime is lighter and has first-class CoreML. |
+| ort (ONNX Runtime) | burn | burn is a training-focused framework. Inference support exists but the ONNX import is less mature than ort. Better for training Rust-native models from scratch. |
 
-### Data Storage and Export
+**ort feature flags needed:**
 
-| Crate | Version | Purpose | Integration Point |
-|-------|---------|---------|-------------------|
-| parquet | 57.x | Checkpoint snapshots + FCD/edge stats export | velos-output crate for columnar data export. velos-core for checkpoint save/restore. arrow-rs 57.0.0 introduced 4x faster thrift metadata parser. |
-| arrow | 57.x | Arrow columnar format (required by parquet crate) | Used internally by parquet. Also enables zero-copy interop if downstream tools read Arrow directly. |
-| serde_json | 1.0.x | Checkpoint metadata (meta.json), config files | velos-core checkpoint metadata, scenario config parsing. |
-| flatbuffers | 25.12.19 | Binary WebSocket frame protocol | velos-api for tile-based agent position frames over WebSocket. 8 bytes per agent as defined in 05-visualization-api.md (TileFrame schema). |
+```toml
+[dependencies]
+ort = { version = "2.0.0-rc.12", features = ["coreml"] }
+```
 
-**Why parquet/arrow (not just postcard for everything):** Parquet is the right choice for checkpoint and output because: (1) columnar layout matches ECS SoA pattern; (2) Zstd compression yields ~15MB for 280K agents; (3) readable by Python/R/DuckDB for downstream analysis without custom deserialization. Postcard stays for any internal IPC where schema portability does not matter.
+The `coreml` feature enables Apple's CoreML execution provider, which delegates supported ops to the Apple Neural Engine (ANE) or Metal GPU. This is critical for achieving real-time inference on Apple Silicon without discrete GPU.
 
-**Why flatbuffers (not protobuf) for WebSocket frames:** FlatBuffers provides zero-copy deserialization -- critical for 10Hz 280K-agent frame streaming at ~32KB per viewport. Protobuf requires a full deserialize step. The 05-visualization-api.md spec already defines the TileFrame schema in FlatBuffers format.
+**Detection model recommendation:** YOLO11n (nano) or YOLOv8n exported to ONNX format via Ultralytics. The nano variants balance speed vs accuracy for traffic counting. Export command: `yolo export model=yolo11n.pt format=onnx`. Pre-trained COCO weights already detect vehicles (car, truck, bus, motorcycle) and persons. Fine-tune on HCMC traffic camera footage for motorbike-heavy scenes.
 
-### Redis Pub/Sub
+**Confidence:** HIGH -- ort + CoreML on macOS is well-documented, YOLO ONNX export is a standard workflow.
 
-| Crate | Version | Purpose | Integration Point |
-|-------|---------|---------|-------------------|
-| redis | 1.0.4 | Redis client for pub/sub tile frame fan-out | velos-api WebSocket relay pods. Simulation publishes per-tile frames to Redis channels. Relay pods subscribe to tiles matching client viewports. Use `features = ["tokio-comp", "aio"]` for async. |
+### Video Ingestion (RTSP + Decoding)
 
-**Why redis (not in-process channels):** v1.0 correctly avoided Redis for single-user desktop. v1.1 needs horizontal WebSocket scaling (100+ concurrent viewers per 05-visualization-api.md). Redis pub/sub decouples the simulation producer from N relay consumers. Stateless relay pods can scale independently.
+| Crate | Version | Purpose | Why Recommended |
+|-------|---------|---------|-----------------|
+| retina | 0.4.17 | Pure-Rust RTSP client for IP camera streams | Production-proven in Moonfire NVR. Handles RTSP/1.0, RTP over TCP (interleaved), H.264/H.265 depacketization. No FFmpeg dependency for the RTSP protocol layer. ~62K downloads. |
+| ffmpeg-next | 8.0.0 | Video frame decoding (H.264/H.265 to raw pixels) | Safe FFmpeg wrapper (2M downloads). Needed because retina gives you NAL units, not decoded frames. FFmpeg's VideoToolbox decoder on macOS provides hardware-accelerated H.264/H.265 decoding via Apple Silicon media engine. |
+| image | 0.25.9 | Frame format conversion (RGB/RGBA buffers) | Standard Rust image processing. Convert decoded frames to tensor-compatible layouts for ort inference. Already widely used in the Rust ecosystem (103M downloads). |
 
-### Prediction and Math
+**Architecture: retina + ffmpeg-next (not ffmpeg-next alone)**
 
-| Crate | Version | Purpose | Integration Point |
-|-------|---------|---------|-------------------|
-| ndarray | 0.17.1 | N-dimensional arrays for historical speed data | velos-predict HistoricalMatcher: Array3<f32> indexed by [edge_id][hour_of_day][day_type] per 03-routing-prediction.md. Also used in calibration for matrix operations. |
-| arc-swap | 1.8.2 | Atomic swap for PredictionOverlay | velos-predict stores Arc<ArcSwap<PredictionOverlay>>. Background tokio task computes new predictions every 60s, swaps atomically. Simulation reads lock-free. |
+Using retina for RTSP and ffmpeg-next only for frame decoding is cleaner than using ffmpeg-next for everything because:
+- retina handles RTSP reconnection, authentication, and stream negotiation in pure Rust with async/await (tokio-compatible)
+- ffmpeg-next's RTSP client is synchronous and harder to integrate with async Rust
+- Separation of concerns: network protocol vs codec decoding
 
-**Why ndarray (not nalgebra):** ndarray is purpose-built for N-dimensional data arrays (our historical speed tables are 3D: edge x hour x day_type). nalgebra is a linear algebra library optimized for matrix multiplication and decomposition -- overkill for array indexing and interpolation.
+**Alternative considered:**
 
-### Calibration
+| Recommended | Alternative | Why Not |
+|-------------|-------------|---------|
+| retina + ffmpeg-next | GStreamer (gstreamer-rs) | GStreamer is a full media framework -- massive dependency graph, complex to build on macOS, overkill for "decode RTSP to frames." retina + ffmpeg-next is surgical. |
+| retina + ffmpeg-next | video-rs 0.11 | video-rs wraps ffmpeg-next with a simpler API, but doesn't support RTSP natively. Would still need retina for camera ingestion. Adds an abstraction layer without benefit. |
+| retina + ffmpeg-next | nokhwa 0.10 | nokhwa is for local webcams (USB/V4L2), not IP cameras with RTSP. Wrong tool for traffic cameras. |
 
-| Crate | Version | Purpose | Integration Point |
-|-------|---------|---------|-------------------|
-| argmin | 0.10.x | Bayesian optimization framework | velos-calibrate crate. GEH/RMSE objective function optimized via CMA-ES or Nelder-Mead. argmin provides the optimization loop; we provide the cost function. |
-| argmin-math | 0.4.x | Math backend for argmin (ndarray-based) | Required by argmin. Use ndarray backend (`features = ["ndarray_latest"]`). |
+**System dependency:** FFmpeg 6.x or 7.x must be installed on the build machine. On macOS: `brew install ffmpeg`. The ffmpeg-next crate links against libavcodec, libavformat, libavutil, libswscale.
 
-**Why argmin (not custom optimizer):** argmin provides production-quality optimization algorithms (Nelder-Mead, CMA-ES, L-BFGS, particle swarm) with built-in checkpointing and observers. Writing Bayesian optimization from scratch is error-prone. argmin's observer pattern also integrates naturally with our Prometheus metrics for tracking calibration convergence.
+**Confidence:** HIGH -- retina is production-proven in NVR systems; ffmpeg-next is the standard Rust FFmpeg binding.
 
-### Observability
+### Supporting Libraries for CV Pipeline
 
-| Crate | Version | Purpose | Integration Point |
-|-------|---------|---------|-------------------|
-| tracing | 0.1.41 | Structured logging throughout all crates | Replace env_logger/log with tracing spans and events. Instrument simulation steps, GPU dispatches, pathfinding queries with structured fields (step, sim_time, frame_time_ms). |
-| tracing-subscriber | 0.3.x | Log formatting, filtering, output | Console output during development. JSON output in Docker deployment. Layer-based composition. |
-| metrics | 0.24.x | Metrics facade (gauges, counters, histograms) | velos-core SimMetrics: frame_time_ms histogram, agent_count gauge, gridlock_events counter per 06-infrastructure.md. |
-| metrics-exporter-prometheus | 0.16.x | Prometheus /metrics HTTP endpoint | Exposes metrics at :9090/metrics. Scraped by Prometheus container in Docker Compose. |
+| Library | Version | Purpose | When to Use |
+|---------|---------|---------|-------------|
+| ndarray | 0.16.x | Tensor manipulation for pre/post-processing | Resize, normalize, transpose frames before ort inference. NMS (non-max suppression) post-processing on detection outputs. |
+| imageproc | 0.25.x | Image processing primitives | Bounding box drawing on debug frames, resize operations as alternative to ndarray. |
+| tokio | 1.47+ | Async runtime for camera stream tasks | Already in v1.1 stack. Camera ingestion runs as tokio tasks, one per camera feed. |
 
-**Why tracing (not log/env_logger):** v1.0 uses log + env_logger which provides unstructured text logging. v1.1 needs structured fields (step=27150, frame_time_ms=8.2, reroute_count=12) for Grafana dashboards and debugging at 280K agent scale. tracing is the Rust ecosystem standard for this. It is backwards-compatible with log via tracing-log bridge.
+---
 
-**Why metrics + metrics-exporter-prometheus (not prometheus crate directly):** The metrics facade provides a clean API (counter!, gauge!, histogram!) decoupled from the exporter. If we later switch from Prometheus to Datadog or OpenTelemetry, only the exporter changes. The prometheus crate forces Prometheus-specific types into application code.
+## Part 2: 3D Native wgpu Rendering
 
-### Utility Crates
+### 3D Model Loading
 
-| Crate | Version | Purpose | Integration Point |
-|-------|---------|---------|-------------------|
-| chrono | 0.4.43 | Timestamp handling for checkpoints, demand profiles | Checkpoint naming (format!("checkpoint_{sim_time}_{timestamp}")). Time-of-day mapping for demand profiles and historical prediction. |
-| smallvec | 1.15.1 | Stack-allocated small vectors for routes | Route struct uses SmallVec<[u32; 16]> per 01-simulation-engine.md ECS layout. Most routes are <16 edges, avoiding heap allocation. |
-| geojson | 0.24.x | GeoJSON export for GIS tools | velos-output GeoJSON export (QGIS, ArcGIS compatibility). |
-| quick-xml | 0.39.0 | SUMO FCD XML export | velos-output SUMO-compatible Floating Car Data export for ecosystem compatibility. |
+| Crate | Version | Purpose | Why Recommended |
+|-------|---------|---------|-----------------|
+| gltf | 1.4.1 | glTF 2.0 / GLB model loading | The standard Rust glTF loader (5.8M downloads). Parses meshes, materials, textures, animations. Outputs vertex data ready for wgpu buffer upload. Used by Bevy, rend3, and every major Rust 3D project. |
 
-### Docker and Infrastructure (not Rust crates)
+**Why glTF format:** glTF is the "JPEG of 3D" -- industry standard, supported by Blender export, optimized for GPU upload (binary buffers match GPU vertex layout). Vehicle models (motorbike, car, bus, truck) and street furniture (traffic lights, signs) should be authored as GLB files.
 
-| Technology | Version | Purpose | Notes |
-|------------|---------|---------|-------|
-| Redis | 7.x (Alpine image) | Pub/sub message broker for WebSocket scaling | redis:7-alpine Docker image. Minimal footprint. Only used for pub/sub, not as a database. |
-| Prometheus | 2.48+ | Metrics collection and alerting | prom/prometheus:v2.48.0 Docker image. Scrapes /metrics from velos-api. |
-| Grafana | 10.2+ | Dashboards and visualization | grafana/grafana:10.2.0. Pre-provisioned dashboards for simulation KPIs. |
-| Nginx | Alpine | Static file server for PMTiles and dashboard | Serves hcmc.pmtiles via HTTP range requests. Also serves built deck.gl dashboard. |
-| Docker Compose | 3.9 spec | Orchestration for POC deployment | Single-node multi-container. nvidia runtime for GPU passthrough. |
+**Integration with existing wgpu renderer:** The current 2D renderer uses GPU instancing with styled shapes. The 3D renderer will:
+1. Parse GLB with `gltf` crate at startup
+2. Upload vertex/index buffers to wgpu
+3. Use instanced draw calls (one draw per vehicle type, instance buffer has transform + color)
+4. This mirrors the existing 2D instancing pattern but with 3D meshes instead of quads
 
-## Frontend Stack (dashboard/ directory -- TypeScript)
+**Confidence:** HIGH -- gltf is the uncontested standard.
 
-Replaces egui desktop UI with web-based analytics dashboard.
+### OSM Building Extrusion (Custom Rust)
 
-| Technology | Version | Purpose | Why |
-|------------|---------|---------|-----|
-| React | 19.x | Dashboard UI framework | Ecosystem maturity, deck.gl has first-class React bindings (@deck.gl/react). |
-| TypeScript | 5.7+ | Type safety | Non-negotiable for any frontend. |
-| Vite | 6.x | Build tool and dev server | Fast HMR, native ESM. Standard choice for React projects. |
-| deck.gl | 9.2.x | GPU-accelerated 2D map visualization | Primary visualization. ScatterplotLayer for 280K agent dots at 60 FPS. HeatmapLayer for density. IconLayer for flow arrows. Built-in WebGL instancing. |
-| @deck.gl/react | 9.2.x | React bindings for deck.gl | Declarative layer composition in JSX. |
-| maplibre-gl | 5.19.x | Base map renderer (vector tiles) | Open-source Mapbox GL fork. Renders PMTiles via pmtiles:// protocol. Full style spec support. |
-| pmtiles | 4.4.0 | PMTiles client-side loader | Loads vector tiles from static .pmtiles file via HTTP range requests. Zero tile server needed. |
-| CesiumJS | 1.139.x | 3D visualization (optional/secondary) | Stakeholder demos. OSM building extrusions + terrain. Self-hosted tiles (no Cesium Ion dependency). |
-| pnpm | 9.x | Package manager | Project convention. |
+| Crate | Version | Purpose | Why Recommended |
+|-------|---------|---------|-----------------|
+| earcut | 0.4.5 | Polygon triangulation for building footprint caps | Rust port of Mapbox's earcut algorithm. Handles concave polygons with holes (common in building footprints). Fast, no-alloc design. Used by maplibre-rs. |
+| lyon | 1.0.19 | Path tessellation for complex geometry | Alternative/complement to earcut for road surfaces, park boundaries, water bodies. Handles Bezier curves and stroke tessellation. 3.3M downloads. |
+| geo | 0.29.x | Geometric operations on OSM polygons | Boolean operations, simplification, coordinate transforms. Already implied by osmpbf usage in velos-net. |
 
-**Why deck.gl (not Mapbox GL layers or custom WebGL):** deck.gl is purpose-built for large-scale geospatial data visualization. Its ScatterplotLayer handles 200K+ points at 60 FPS using WebGL instancing -- exactly what we need for 280K agents. MapLibre alone cannot handle this point density performantly. Custom WebGL would be reinventing deck.gl.
+**Why custom Rust over existing tools:**
 
-**Why CesiumJS is secondary (not primary):** CesiumJS excels at 3D globe visualization but is heavier than deck.gl for 2D analytics. Traffic engineering analysis is done in 2D (heatmaps, flow arrows, congestion overlays). CesiumJS is for presentation/demos only -- defer implementation if time-constrained.
+| Recommended | Alternative | Why Not |
+|-------------|-------------|---------|
+| Custom Rust (earcut + osmpbf) | osm2world (Java) | Java sidecar process. Would need IPC, adds JVM dependency. The extrusion algorithm is straightforward: parse OSM building polygons, read `building:levels` or `height` tag, extrude walls, triangulate caps with earcut. ~500 lines of Rust. |
+| Custom Rust (earcut + osmpbf) | py3dtilers (Python) | Python sidecar. Violates project principle of no Python bridge. Outputs 3D Tiles format which then needs parsing -- double conversion. |
+| Custom Rust (earcut + osmpbf) | Cesium OSM Buildings | Commercial service (Cesium Ion). Requires internet, API key, 3D Tiles streaming. Not self-hosted. |
 
-## Workspace Cargo.toml Additions
+**Building extrusion algorithm (implemented in a new `velos-city` crate):**
+1. Filter OSM ways/relations with `building=*` tag (already parsed by osmpbf in velos-net)
+2. Project lat/lon to local meters (UTM zone 48N for HCMC)
+3. Read `building:levels` tag (default 3 for HCMC), multiply by 3.0m per level for height
+4. Generate wall quads by extruding each edge of the footprint polygon
+5. Triangulate top/bottom caps with earcut (handles concave polygons + holes)
+6. Output vertex buffer (position + normal) ready for wgpu upload
+7. Batch all buildings into a single GPU buffer with indirect draw
+
+**Confidence:** HIGH -- earcut is well-proven, the algorithm is well-understood, OSM data is already parsed.
+
+### Terrain / DEM
+
+| Crate | Version | Purpose | Why Recommended |
+|-------|---------|---------|-----------------|
+| tiff | 0.11.3 | GeoTIFF raster parsing | Low-level TIFF reader (62M downloads via image crate dependency). Read SRTM or ALOS DEM elevation data. |
+| geotiff | 0.1.0 | GeoTIFF coordinate-aware reading | Adds geospatial metadata (CRS, transform) on top of tiff crate. Early but functional (11K downloads). Built specifically for DEM/elevation use cases. |
+
+**Practical note on DEM for HCMC:** Ho Chi Minh City is extremely flat (1-10m elevation). Terrain mesh adds visual fidelity but has near-zero impact on simulation accuracy. Recommend deferring DEM integration to a polish phase.
+
+**DEM mesh generation approach:**
+1. Parse SRTM 30m GeoTIFF for HCMC region (~small file, covers Districts 1/3/5/10/BT)
+2. Generate regular grid mesh (vertices at each elevation sample, 30m spacing)
+3. Apply Delaunay or regular grid triangulation
+4. Upload as single static wgpu vertex buffer
+5. Drape road network and buildings on top via vertex shader height offset
+
+**Alternative considered:**
+
+| Recommended | Alternative | Why Not |
+|-------------|-------------|---------|
+| geotiff + custom mesh | tin-terrain (C++) | C++ CLI tool, not a library. Would need subprocess call + file I/O. The mesh generation from a regular grid is trivial in Rust (~200 lines). |
+
+**Confidence:** MEDIUM -- geotiff crate is v0.1.0 with low downloads. Fallback: use tiff crate directly and parse GeoTIFF metadata manually (well-documented format).
+
+### 3D Rendering Infrastructure
+
+| Crate | Version | Purpose | Why Recommended |
+|-------|---------|---------|-----------------|
+| glam | 0.29 | 3D math (Mat4, Vec3, Quat) | Already in workspace. Handles view/projection matrices, camera transforms, frustum culling. No change needed. |
+| bytemuck | 1.x | Safe casting for GPU buffer uploads | Already in workspace. Cast Rust structs to &[u8] for wgpu buffer writes. No change needed. |
+| wgpu | 27 (current) | GPU rendering backend | Already in workspace. Supports 3D render passes, depth buffers, MSAA. The existing 2D renderer already uses wgpu -- extend with depth attachment and 3D pipeline. No version change required for 3D support. |
+
+**3D rendering additions needed (no new crates, just new shaders + pipeline config):**
+- Depth buffer attachment (wgpu::TextureFormat::Depth32Float)
+- 3D vertex shader with MVP matrix uniform
+- Phong or PBR fragment shader for buildings/vehicles
+- Shadow mapping (optional, adds significant complexity)
+- Frustum culling (CPU-side with glam, or GPU compute shader)
+
+**Confidence:** HIGH -- all required crates are already in the workspace.
+
+### Map Tile Generation (Offline Tooling)
+
+| Tool | Purpose | Why Recommended |
+|------|---------|-----------------|
+| Planetiler | Generate PMTiles vector tiles from OSM PBF | Java CLI tool, runs offline during data prep. Generates planet-scale vector tiles. Actively maintained, used by Protomaps for daily builds. Outputs PMTiles format which the project already uses (served by Nginx per 06-infrastructure.md). |
+
+**Why Planetiler over alternatives:**
+
+| Recommended | Alternative | Why Not |
+|-------------|-------------|---------|
+| Planetiler | tilemaker | tilemaker's last release was 2022, GitHub issues unmonitored. Planetiler is actively maintained and faster at scale. |
+| Planetiler | Martin (Rust) | Martin is a tile *server* that generates tiles on-the-fly from PostGIS. The project uses PMTiles (static files, no database). Martin is the wrong tool for static tile generation. Already excluded in CLAUDE.md. |
+| Planetiler | tippecanoe | tippecanoe converts GeoJSON to vector tiles. Planetiler reads OSM PBF directly -- no intermediate GeoJSON step. More efficient for OSM data. |
+
+**Note:** Planetiler is an offline build tool, not a Rust dependency. It runs during data pipeline preparation: `java -jar planetiler.jar --osm-path=hcmc.osm.pbf --output=hcmc.pmtiles`. The output PMTiles file is served statically.
+
+**Confidence:** HIGH -- Planetiler is the community standard for PMTiles generation.
+
+---
+
+## Installation Summary
+
+### Rust Dependencies (Cargo.toml additions)
 
 ```toml
 [workspace.dependencies]
-# --- EXISTING (version bumps) ---
-wgpu = "28"                                          # was "27"
-tokio = { version = "1.47", features = ["full"] }    # explicit, LTS
-rayon = "1.11"                                       # explicit version
+# CV Pipeline
+ort = { version = "2.0.0-rc.12", features = ["coreml"] }
+retina = "0.4"
+ffmpeg-next = "8"
+ndarray = "0.16"
+image = "0.25"
 
-# --- NEW: Serialization ---
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-flatbuffers = "25.12"
-parquet = { version = "57", features = ["zstd"] }
-arrow = "57"
+# 3D Rendering
+gltf = "1.4"
+earcut = "0.4"
+lyon = "1.0"
+geo = "0.29"
 
-# --- NEW: API Server ---
-tonic = "0.14"
-tonic-build = "0.14"
-prost = "0.13"
-axum = "0.8"
-axum-extra = { version = "0.10", features = ["typed-header"] }
-tower = "0.5"
-tower-http = { version = "0.6", features = ["cors", "compression-gzip"] }
-
-# --- NEW: Redis ---
-redis = { version = "1.0", features = ["tokio-comp", "aio"] }
-
-# --- NEW: Prediction / Math ---
-ndarray = "0.17"
-arc-swap = "1.8"
-
-# --- NEW: Calibration ---
-argmin = "0.10"
-argmin-math = { version = "0.4", features = ["ndarray_latest"] }
-
-# --- NEW: Observability ---
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
-metrics = "0.24"
-metrics-exporter-prometheus = "0.16"
-
-# --- NEW: Utility ---
-chrono = { version = "0.4", features = ["serde"] }
-smallvec = { version = "1.15", features = ["serde"] }
-geojson = "0.24"
-quick-xml = { version = "0.39", features = ["serialize"] }
-
-# --- NEW: Checkpoint ---
-postcard = { version = "1.1", features = ["alloc"] }
+# Terrain (defer to polish phase)
+# geotiff = "0.1"
+# tiff = "0.11"
 ```
 
-## Frontend package.json Additions
+### System Dependencies (macOS)
 
 ```bash
-# Core visualization
-pnpm add deck.gl @deck.gl/core @deck.gl/layers @deck.gl/react @deck.gl/aggregation-layers
-pnpm add maplibre-gl pmtiles
-pnpm add react react-dom
+# FFmpeg for video decoding (required by ffmpeg-next)
+brew install ffmpeg
 
-# 3D visualization (optional, defer if time-constrained)
-pnpm add cesium @cesium/widgets
+# ONNX Runtime downloads automatically via ort's download strategy
+# No manual install needed -- ort fetches the correct dylib at build time
 
-# Dev dependencies
-pnpm add -D typescript vite @vitejs/plugin-react @types/react @types/react-dom
+# Planetiler for tile generation (offline tool)
+# Download from https://github.com/onthegomap/planetiler/releases
 ```
 
-## Alternatives Considered
+### New Crates to Create
 
-| Recommended | Alternative | Why Not Alternative |
-|-------------|-------------|---------------------|
-| tonic 0.14 (gRPC) | tarpc / capnproto-rpc | tonic is the de facto Rust gRPC implementation. Ecosystem tooling (grpcurl, Postman) works out of the box. tarpc lacks protobuf interop with non-Rust clients. |
-| axum 0.8 (REST) | actix-web 4 | axum shares the tokio/tower ecosystem with tonic. Running both on one runtime is trivial. actix-web uses its own runtime, creating friction. |
-| parquet 57 (storage) | postcard (binary) | Parquet enables downstream analysis in Python/DuckDB without custom deserialization. Postcard is better for pure-Rust internal IPC. Use both: postcard for internal, parquet for external. |
-| flatbuffers (WebSocket) | protobuf (WebSocket) | FlatBuffers provides zero-copy reads -- critical for 10Hz frame streaming. Protobuf requires full deserialization. FlatBuffers schema matches the compact TileFrame format (8 bytes/agent). |
-| redis 1.0 (pub/sub) | NATS / ZeroMQ | Redis is already in the Docker Compose stack. Adding another broker increases ops complexity for no benefit at POC scale (100 viewers). NATS would be warranted at 10K+ viewers. |
-| ndarray 0.17 (arrays) | nalgebra | ndarray is for N-dimensional data indexing. Our historical speed table is Array3<f32>. nalgebra is for linear algebra (matrix multiply, decomposition) -- not our use case. |
-| deck.gl 9.2 (2D viz) | Mapbox GL JS | Mapbox GL is proprietary with usage-based pricing. MapLibre (open fork) handles base maps. deck.gl handles the data overlay (280K points). |
-| metrics facade | prometheus crate | metrics crate provides a backend-agnostic API. Avoids vendor lock-in to Prometheus-specific types in application code. |
-| tracing | log + env_logger | tracing provides structured spans and fields. Essential for debugging 280K-agent simulations. log only provides unstructured text. |
+| Crate | Dependencies | Responsibility |
+|-------|-------------|----------------|
+| velos-cv | ort, retina, ffmpeg-next, ndarray, image, tokio | Camera feed ingestion, YOLO inference, detection post-processing, count aggregation |
+| velos-city | earcut, lyon, geo, gltf, osmpbf | OSM building extrusion, 3D mesh generation, glTF vehicle model loading, terrain mesh |
 
-## What NOT to Add
-
-| Avoid | Why | Already Have / Use Instead |
-|-------|-----|---------------------------|
-| Tauri | v1.1 moves from desktop to web dashboard. No native window shell needed. Simulation runs as a headless service with web frontend. | winit (kept for dev-mode rendering), axum (web server), deck.gl (dashboard) |
-| egui for production UI | egui was right for v1.0 desktop POC. v1.1 dashboard needs charts, maps, complex layouts that egui handles poorly. | deck.gl + React dashboard. Keep egui only as optional dev-mode overlay. |
-| Arrow IPC / Python bridge | Explicitly rejected in 03-routing-prediction.md. In-process Rust-native ensemble is faster and simpler. | Built-in BPR + ETS + historical ensemble in velos-predict |
-| Martin tile server | PMTiles static files served by Nginx eliminate the need for a tile server process. | PMTiles + Nginx (zero additional services) |
-| Nominatim geocoding | Not needed for POC. Agents use edge IDs, not addresses. | Direct edge ID references |
-| 3DCityDB | No CityGML dataset exists for HCMC. OSM building:levels extrusions in deck.gl/CesiumJS suffice. | deck.gl ColumnLayer for building extrusions |
-| Kubernetes | Docker Compose is sufficient for single-node 2-4 GPU deployment at POC scale. K8s adds operational complexity without benefit. | Docker Compose 3.9 |
-| NATS / Kafka / RabbitMQ | Redis pub/sub is sufficient for tile-based frame fan-out at 100 viewers. Additional message brokers add unnecessary ops burden. | Redis 7 (already in stack for pub/sub) |
-| bincode | Unmaintained (RUSTSEC-2025-0141). | postcard 1.1 for internal binary serialization |
-| reqwest / hyper (client) | No outbound HTTP calls needed. Simulation is self-contained. Calibration data loaded from local files. | Direct file I/O |
-| diesel / sqlx | No SQL database in the architecture. All state is ECS + Parquet files. | Parquet + arrow-rs |
-| bevy / bevy_ecs | Bevy pulls in an entire game engine. hecs is the right minimal ECS. | hecs 0.11 (already validated) |
-| fast_paths (CH crate) | Does not support dynamic weight customization -- the whole reason we need CCH. | Custom CCH implementation |
-
-## Crate-to-Feature Mapping
-
-Shows which new crate serves which v1.1 feature:
-
-| v1.1 Feature | New Crates Required |
-|--------------|---------------------|
-| Multi-GPU wave-front dispatch | wgpu 28 (bump), smallvec |
-| Fixed-point arithmetic | No new crates (pure WGSL + Rust math) |
-| CCH dynamic pathfinding | No new crates (custom implementation on petgraph) |
-| BPR + ETS + historical prediction | ndarray, arc-swap, chrono |
-| Meso-micro hybrid simulation | No new crates (pure Rust math in velos-meso) |
-| deck.gl web visualization | deck.gl, maplibre-gl, pmtiles (frontend) |
-| CesiumJS 3D visualization | cesium (frontend) |
-| gRPC API | tonic, tonic-build, prost |
-| REST/WebSocket API | axum, axum-extra, tower, tower-http, flatbuffers |
-| Redis pub/sub scaling | redis |
-| Docker deployment | No Rust crates (infrastructure-only) |
-| Prometheus/Grafana monitoring | metrics, metrics-exporter-prometheus, tracing, tracing-subscriber |
-| Parquet checkpoint/output | parquet, arrow, serde_json, chrono |
-| GEH/RMSE calibration | argmin, argmin-math, ndarray |
-| Emissions modeling (HBEFA) | No new crates (lookup tables in Rust) |
-| Scenario DSL | No new crates (parser built with Rust standard library or nom if complex) |
-| FCD/GeoJSON/CSV export | geojson, quick-xml |
-| PMTiles map serving | pmtiles (frontend), Nginx (infrastructure) |
-| Pedestrian adaptive workgroups | No new crates (GPU compute in WGSL) |
-| Bus dwell time / bicycle agents | No new crates (agent model math in velos-vehicle) |
+---
 
 ## Version Compatibility Matrix
 
-| Package A | Compatible With | Notes |
-|-----------|-----------------|-------|
-| wgpu 28.0 | naga 28.0 (bundled) | Versions locked in wgpu monorepo. |
-| tonic 0.14 | prost 0.13, tokio 1.47+ | tonic-build codegen produces prost 0.13 compatible code. |
-| axum 0.8 | tokio 1.47+, tower 0.5 | Shares tower middleware with tonic. Both on same tokio runtime. |
-| parquet 57 | arrow 57 | Version-locked in apache/arrow-rs monorepo. Always use matching versions. |
-| argmin 0.10 | ndarray 0.17 via argmin-math 0.4 | argmin-math bridges argmin to ndarray. Use `ndarray_latest` feature. |
-| tracing 0.1 | tracing-subscriber 0.3 | Stable pair. tracing-log 0.2 bridges log crate compatibility. |
-| metrics 0.24 | metrics-exporter-prometheus 0.16 | Version pair maintained together. |
-| deck.gl 9.2 | maplibre-gl 5.x | deck.gl uses MapView with maplibre-gl as base map renderer. |
-| deck.gl 9.2 | React 19 | @deck.gl/react 9.2.x supports React 18 and 19. |
+| Package | Compatible With | Notes |
+|---------|-----------------|-------|
+| ort 2.0.0-rc.12 | ONNX Runtime 1.20+ | Auto-downloads correct ORT version. CoreML EP requires macOS 12+. |
+| retina 0.4.17 | tokio 1.x | Async RTSP client, shares tokio runtime with axum/tonic from v1.1 stack. |
+| ffmpeg-next 8.0.0 | FFmpeg 6.x-8.x | Links against system FFmpeg. Verify with `pkg-config --modversion libavcodec`. |
+| gltf 1.4.1 | Any wgpu version | Pure parser, outputs vertex data. No GPU dependency. |
+| earcut 0.4.5 | No external deps | Pure Rust, no-std compatible. |
+| ort 2.0.0-rc.12 | Rust 2024 edition | Verified: ort supports modern Rust editions. |
 
-## Confidence Assessment
+---
 
-| Area | Confidence | Rationale |
-|------|------------|-----------|
-| API server (tonic + axum) | HIGH | Both are mature, production-proven, same tokio ecosystem. Verified versions on crates.io. |
-| Parquet/Arrow for checkpoints | HIGH | arrow-rs 57 is actively maintained by Apache. Parquet is the standard columnar format. |
-| FlatBuffers for WebSocket | MEDIUM | flatbuffers crate works but has less community usage than protobuf. Schema maintenance is an extra step. Verify FlatBuffers read performance in JavaScript matches expectations. |
-| Redis pub/sub scaling | HIGH | redis-rs 1.0 is stable. Redis pub/sub for fan-out is a well-known pattern. Straightforward implementation. |
-| deck.gl visualization | HIGH | deck.gl 9.x handles 200K+ points at 60 FPS. Well-documented, active development (9.2.11 released days ago). |
-| CesiumJS 3D | MEDIUM | CesiumJS works but is heavy. Self-hosting tiles (no Cesium Ion) requires careful setup. Mark as optional/deferrable. |
-| argmin calibration | MEDIUM | argmin is the best Rust optimization crate but has a smaller community than Python scipy.optimize. Verify CMA-ES convergence on GEH objective before committing. |
-| Custom CCH pathfinding | MEDIUM | No off-the-shelf Rust CCH crate. Algorithm is well-documented academically but custom implementation is significant engineering. Highest risk item in the stack. |
-| Observability (tracing + metrics) | HIGH | tracing and metrics are the Rust ecosystem standards. Prometheus integration is well-documented. |
+## What NOT to Use
+
+| Avoid | Why | Use Instead |
+|-------|-----|-------------|
+| OpenCV (opencv-rust) | Massive C++ dependency (1GB+), complex build, most features unused. Only needed if doing advanced image processing beyond detection. | ort for inference + image/ndarray for pre/post-processing |
+| Python sidecar (ultralytics) | Violates project principle. IPC overhead, deployment complexity, two runtimes. | Export YOLO to ONNX once (Python), run inference in Rust (ort) forever |
+| GStreamer (gstreamer-rs) | Full media framework overkill. Complex macOS build (dozens of plugins). | retina + ffmpeg-next for surgical RTSP + decode |
+| rend3 | 3D renderer built on wgpu, but opinionated about scene graph, materials, lighting. Would conflict with existing custom wgpu renderer and ECS architecture. | Extend existing wgpu renderer with 3D pipeline |
+| Bevy (bevy_render) | Full game engine. Cannot integrate with existing hecs ECS and custom wgpu usage. | Keep custom renderer, add 3D capabilities directly |
+| three-d | Another 3D renderer. Same problem as rend3 -- owns the render loop. | Custom wgpu 3D pipeline |
+| 3D Tiles (Cesium) | Commercial streaming format. Requires Cesium Ion subscription or complex self-hosting. Overkill for static city visualization. | Custom OSM building extrusion with earcut |
+| tch-rs (PyTorch) | 2GB libtorch binary, poor macOS Metal support, complex linking. | ort with CoreML execution provider |
+
+---
+
+## Stack Patterns by Use Case
+
+**If adding more camera feeds (>4 simultaneous):**
+- Use tokio::spawn per camera with bounded channels
+- Consider ffmpeg-next hardware decoder pool (VideoToolbox sessions are limited on macOS)
+- ort supports batched inference -- accumulate frames from multiple cameras into one batch
+
+**If detection accuracy is insufficient with YOLO11n:**
+- Step up to YOLO11s (small) or YOLO11m (medium) -- larger but more accurate
+- Fine-tune on HCMC traffic dataset (motorbike-heavy, helmet variations)
+- Consider two-stage: YOLO for detection + lightweight classifier for vehicle type
+
+**If 3D rendering performance degrades with many buildings:**
+- LOD (Level of Detail): simplified geometry for distant buildings
+- Frustum culling: skip buildings outside camera view (glam AABB test)
+- Occlusion culling: skip buildings behind other buildings (GPU occlusion queries or Hi-Z buffer)
+- Instancing: batch identical building geometries (common in residential areas)
+
+**If geotiff crate is too immature:**
+- Use tiff crate directly + manual GeoTIFF metadata parsing
+- GeoTIFF is just TIFF + specific TIFF tags (ModelTiepointTag, ModelPixelScaleTag, GeoKeyDirectoryTag)
+- ~100 lines of custom code to extract elevation grid from SRTM GeoTIFF
+
+---
 
 ## Sources
 
-- [tonic crates.io](https://crates.io/crates/tonic) -- version 0.14.3 verified
-- [tonic docs.rs](https://docs.rs/crate/tonic/latest) -- 0.14.3 API docs
-- [axum 0.8 announcement](https://tokio.rs/blog/2025-01-01-announcing-axum-0-8-0) -- breaking changes documented
-- [axum crates.io](https://crates.io/crates/axum) -- version 0.8.8 verified
-- [parquet crates.io](https://crates.io/crates/parquet) -- version 57.x verified
-- [Apache Arrow Rust 57.0.0 release](https://arrow.apache.org/blog/2025/10/30/arrow-rs-57.0.0/) -- 4x faster metadata parser
-- [flatbuffers crates.io](https://crates.io/crates/flatbuffers) -- version 25.12.19 verified
-- [redis crates.io](https://crates.io/crates/redis) -- version 1.0.4 verified
-- [ndarray crates.io](https://crates.io/crates/ndarray) -- version 0.17.1 verified
-- [arc-swap crates.io](https://crates.io/crates/arc-swap) -- version 1.8.2 verified
-- [argmin website](https://argmin-rs.org/) -- optimization algorithms documented
-- [tracing crates.io](https://crates.io/crates/tracing) -- version 0.1.41 verified
-- [metrics-exporter-prometheus crates.io](https://crates.io/crates/metrics-exporter-prometheus) -- version 0.16+ verified
-- [deck.gl npm](https://www.npmjs.com/package/deck.gl) -- version 9.2.11 verified
-- [maplibre-gl npm](https://www.npmjs.com/package/maplibre-gl) -- version 5.19.0 verified
-- [pmtiles npm](https://www.npmjs.com/package/pmtiles) -- version 4.4.0 verified
-- [CesiumJS npm](https://www.npmjs.com/package/cesium) -- version 1.139.1 verified
-- [tokio crates.io](https://crates.io/crates/tokio) -- version 1.50.0, LTS 1.47.x verified
-- [rayon crates.io](https://crates.io/crates/rayon) -- version 1.11.0 verified
-- [chrono crates.io](https://crates.io/crates/chrono) -- version 0.4.43 verified
-- [smallvec crates.io](https://crates.io/crates/smallvec) -- version 1.15.1 verified
-- [quick-xml crates.io](https://crates.io/crates/quick-xml) -- version 0.39.0 verified
-- [serde crates.io](https://crates.io/crates/serde) -- version 1.0.228 verified
+- [ort crate (crates.io)](https://crates.io/crates/ort) -- v2.0.0-rc.12, 6.8M downloads, verified via crates.io API
+- [ort documentation](https://ort.pyke.io/) -- CoreML execution provider setup, download strategy
+- [ONNX Runtime CoreML EP](https://onnxruntime.ai/docs/execution-providers/CoreML-ExecutionProvider.html) -- macOS support, op coverage
+- [retina crate (GitHub)](https://github.com/scottlamb/retina) -- v0.4.17, RTSP protocol handling, production use in Moonfire NVR
+- [ffmpeg-next (crates.io)](https://crates.io/crates/ffmpeg-next) -- v8.0.0, 2M downloads, FFmpeg 6-8 compatibility
+- [gltf crate (GitHub)](https://github.com/gltf-rs/gltf) -- v1.4.1, 5.8M downloads, glTF 2.0 spec compliance
+- [earcut (crates.io)](https://crates.io/crates/earcut) -- v0.4.5, Mapbox earcut port, concave polygon + holes support
+- [Ultralytics YOLO docs](https://docs.ultralytics.com/models/yolo11/) -- ONNX export workflow, model variants (n/s/m/l/x)
+- [Planetiler (GitHub)](https://github.com/onthegomap/planetiler) -- PMTiles generation from OSM PBF
+- [geotiff (crates.io)](https://crates.io/crates/geotiff) -- v0.1.0, early but purpose-built for DEM reading
+- [lyon (crates.io)](https://crates.io/crates/lyon) -- v1.0.19, 3.3M downloads, path tessellation
 
 ---
-*Stack research for: VELOS v1.1 Digital Twin Platform -- stack additions for scaling from desktop POC to web-based 280K-agent simulation platform*
-*Researched: 2026-03-07*
+*Stack research for: Camera CV detection + 3D native wgpu rendering*
+*Researched: 2026-03-09*

@@ -1,307 +1,480 @@
-# Pitfalls Research
+# Domain Pitfalls: Camera CV Detection + 3D Rendering for VELOS
 
-**Domain:** Scaling Rust/wgpu traffic microsimulation from desktop POC to production digital twin platform
-**Researched:** 2026-03-07
-**Confidence:** MEDIUM-HIGH (verified against wgpu docs, GPU simulation papers, RoutingKit CCH docs, deck.gl performance guides, Redis scaling literature)
+**Domain:** Adding camera-based vehicle/pedestrian detection and 3D native wgpu rendering to an existing GPU-accelerated Rust traffic microsimulation
+**Researched:** 2026-03-09
+**Confidence:** MEDIUM-HIGH (verified against wgpu v28 release notes, Apple Metal documentation, ONNX Runtime CoreML docs, YOLO benchmark papers, existing VELOS codebase analysis)
 
-**Context:** v1.0 shipped a 1.5K-agent desktop app (egui/winit, CPU physics, A* routing, single GPU render). v1.1 scales to 280K agents with multi-GPU compute, CCH routing, prediction ensemble, deck.gl web visualization, gRPC/REST/WebSocket API, and Docker deployment. These pitfalls focus specifically on what breaks during that transition.
+**Context:** VELOS is a 31K LOC Rust workspace running wgpu 28 on macOS Metal. It currently uses a single `wgpu::Device` and `wgpu::Queue` for both compute (wave-front car-following, perception, pedestrian social force) and 2D instanced rendering (agent shapes + road lines). The system renders via `egui-wgpu` integration with a `winit` event loop. Adding camera CV and 3D rendering means three GPU-heavy subsystems competing on a single Apple Silicon GPU with unified memory.
+
+---
 
 ## Critical Pitfalls
 
-### Pitfall 1: GPU Compute Not Actually in the Sim Loop -- The "Proven But Not Wired" Trap
+### Pitfall 1: Single wgpu Queue Serializes Compute, Render, and ML Inference
 
 **What goes wrong:**
-v1.0 shipped with GPU compute "proven via tests" but CPU-side ECS physics running the actual sim loop. Scaling to 280K agents requires GPU compute to be the real physics driver, not a parallel test path. Teams commonly maintain both CPU and GPU paths "for testing" and never fully cut over. The CPU path silently handles edge cases the GPU path doesn't, creating a false sense that GPU compute works. When you finally remove the CPU fallback at 280K scale, dozens of unhandled edge cases surface simultaneously.
+VELOS currently uses one `wgpu::Device` and one `wgpu::Queue` (see `app.rs:49-74`). All compute dispatches (wave-front physics, perception, pedestrian adaptive) and all render passes (agent shapes, road lines, egui UI) are submitted sequentially through the same queue. Adding 3D rendering (buildings, terrain, depth buffer, shadow maps) and ML inference (YOLO detection via CoreML/ONNX Runtime) to this same queue creates a serial pipeline where each workload must complete before the next begins. On Apple Silicon, Metal supports only 2x concurrency across the entire GPU -- a single command queue cannot exploit even this limited parallelism.
+
+The frame pipeline becomes: `[compute physics ~2ms] -> [3D render buildings ~4ms] -> [render agents ~1ms] -> [egui ~1ms] -> [ML inference via separate framework]`. Total: 8ms+ per frame, all serialized. The 11x headroom from the original architecture (8ms compute in 100ms budget) evaporates because 3D rendering was not in the original budget.
 
 **Why it happens:**
-CPU physics is easier to debug (breakpoints, print statements, no buffer mapping). Developers keep it as a "reference" and defer full GPU cutover. At 1.5K agents, CPU is fast enough that nobody notices the GPU path isn't actually running. The PROJECT.md explicitly documents this: "GPU compute pipeline proven via tests but not wired into main sim loop."
+wgpu's API encourages a single-queue pattern. The `request_device()` call returns one `Queue`. Creating multiple queues requires multiple `Device` instances from the same adapter, which wgpu does not support (WebGPU spec limitation -- one device per adapter per call). Developers assume "just add more passes to the encoder" is free, not realizing Metal serializes work within a single command queue. The existing `GpuState` struct bundles one `device` and one `queue` -- there is no mechanism to split work across Metal command queues.
 
-**How to avoid:**
-1. **Kill the CPU physics path immediately.** Make the GPU compute shader the sole physics driver in Phase 1 of v1.1. Do not maintain a parallel CPU path "for debugging."
-2. **Build a GPU validation compute pass** that runs after each physics step and checks invariants (no NaN, no negative speed, no position > edge length, gap >= s0). This replaces the debugging convenience of CPU physics.
-3. **Run the v1.0 test suite against GPU output.** All 185 existing tests must pass when physics runs on GPU. Failing tests reveal the unhandled edge cases early.
+**Consequences:**
+- Frame time exceeds 16ms (60 FPS) when 3D rendering is active with 280K agents
+- Simulation timestep stalls while 3D scene renders, causing timing jitter
+- ML inference (if done via Metal/wgpu compute) blocks both simulation and rendering
+- Cannot overlap compute and render even though Metal hardware supports it
+
+**Prevention:**
+1. **Separate ML inference from wgpu entirely.** Use ONNX Runtime (`ort` crate) with CoreML Execution Provider, which runs on the Neural Engine (ANE) and a separate Metal command queue internally. This avoids wgpu queue contention for ML workloads. The ANE is a dedicated accelerator that does not compete with GPU compute/render units.
+2. **Use wgpu's `Device::create_command_encoder()` strategically.** Submit compute and render command buffers in separate `queue.submit()` calls within the same frame. While this does not create true parallelism on a single Metal queue, it allows Metal's scheduler to interleave work at command buffer boundaries.
+3. **Budget 3D rendering as a separate frame cadence.** Render 3D buildings at 30 FPS while running simulation compute at 10 Hz. The 3D scene is mostly static (buildings don't move); only camera changes require re-rendering. Use a dirty flag to skip 3D render passes when the camera hasn't moved.
+4. **Profile with Metal System Trace (Instruments.app).** Check GPU timeline for serial execution. Verify compute and render actually overlap at command buffer boundaries.
 
 **Warning signs:**
-- "We'll switch to GPU physics later" appearing in code reviews
-- GPU tests passing but integration tests still using CPU physics
-- Frame time benchmarks not matching expected GPU throughput (because GPU isn't doing the work)
+- `frame_time_ms` in `SimMetrics` jumps from ~8ms to ~15ms+ when 3D rendering is enabled
+- GPU utilization shows spikes (100% briefly, then idle, then 100% again) rather than sustained load
+- Simulation `sim_time` advances in jerky increments rather than smooth 0.1s steps
+- Enabling/disabling 3D rendering causes large frame time swing (>5ms delta)
 
 **Phase to address:**
-Phase 1 (Foundation). The very first task of v1.1 is wiring GPU compute into the main sim loop. Gate G1 should require GPU physics, not just GPU rendering.
+Phase 1 (Architecture). Design the frame pipeline with explicit compute/render/inference budgets before writing any 3D rendering code. The current `GpuState` struct needs restructuring to separate compute submission from render submission.
 
 ---
 
-### Pitfall 2: Multi-GPU Partitioning Assumes wgpu Multi-Adapter Works for Compute
+### Pitfall 2: YOLO Inference via Metal Compute Steals GPU from Simulation
 
 **What goes wrong:**
-The architecture specifies 2-4 GPUs via `wgpu::Instance::enumerate_adapters()`, each owning a spatial partition. However, wgpu's multi-adapter support for compute workloads is not well-documented and has known issues. On some platforms, `enumerate_adapters()` returns only one adapter, or creating compute pipelines on secondary adapters fails silently. The WebGPU spec does not expose explicit multi-GPU (SLI/CrossFire). wgpu's native-only multi-adapter support is an extension beyond the spec.
+Developers attempt to run YOLO inference directly via wgpu compute shaders or Metal Performance Shaders (MPS) to avoid adding an external dependency. This puts ML inference on the exact same GPU execution units as the traffic simulation compute. On Apple Silicon M1/M2/M3, there is a single GPU with limited concurrent kernel capacity. A YOLOv8n inference pass takes 17-21ms via MPS on M1 Max. During those 17-21ms, simulation compute dispatches are blocked or severely throttled. At 10 Hz simulation (100ms budget), a single YOLO inference consumes 17-21% of the entire frame budget.
+
+With multiple camera streams (4-8 cameras typical for intersection monitoring), inference costs compound: 4 cameras x 17ms = 68ms, leaving only 32ms for the actual simulation + rendering.
 
 **Why it happens:**
-wgpu abstracts GPU access through the WebGPU model, which was designed for single-GPU web browsers. Multi-adapter is a native-only extension. Developers assume "enumerate returns multiple devices, create pipelines on each" will just work, but driver-level quirks (especially mixed GPU vendors, or iGPU+dGPU configurations) cause unexpected failures. Spike S2 in the roadmap exists precisely for this reason.
+Apple Silicon's unified memory makes it tempting to "just run everything on GPU." The `candle-coreml` crate and `ort` with CoreML both offer Metal-accelerated inference. But "Metal-accelerated" means "uses the same GPU compute units as your simulation." Without explicit scheduling, the OS Metal scheduler interleaves ML and simulation work, causing both to slow down.
 
-**How to avoid:**
-1. **Run Spike S2 before writing any multi-GPU code.** The architecture correctly identifies this risk. Do not skip the spike.
-2. **Design the partition abstraction so single-GPU is a trivial specialization.** `MultiGpuScheduler` with `partitions.len() == 1` should be identical to single-GPU operation. This makes the NO-GO fallback (single GPU, 200K agents) a configuration change, not a rewrite.
-3. **If multi-adapter works, validate buffer transfers under load.** Transfer 64KB (the expected per-step boundary agent volume) between GPUs while both are running compute dispatches. Measure latency under contention, not in isolation.
-4. **On macOS (Metal backend), multi-GPU is irrelevant.** Apple Silicon has unified memory and a single GPU. Multi-GPU testing requires NVIDIA hardware (Linux/Vulkan). Plan for platform-specific code paths.
+**Consequences:**
+- Simulation frame rate drops below real-time (10 Hz) when inference is active
+- Detection latency becomes unpredictable (17ms to 100ms+ depending on simulation load)
+- Frame time variance increases, causing timing jitter in agent physics
+- System appears to work in testing (1 camera, 10K agents) but fails at production scale (4 cameras, 280K agents)
+
+**Prevention:**
+1. **Route YOLO inference through the Apple Neural Engine (ANE), not GPU.** Export YOLO to CoreML format with ANE optimization. The ANE is a dedicated 16-core accelerator on M1+ chips that runs independently of GPU compute units. CoreML automatically selects ANE when the model supports it. YOLOv8n on ANE achieves ~5ms latency vs. ~17ms on GPU, and frees the GPU entirely for simulation.
+2. **Use `ort` crate with CoreML Execution Provider.** Configure with `CoreMLExecutionProviderOptions` and let CoreML handle device selection (ANE > GPU > CPU fallback). Do not force GPU execution.
+3. **Cap inference rate independently of simulation rate.** Camera detection at 5 FPS is sufficient for demand calibration (vehicles don't teleport between frames). Run inference on a separate `tokio::spawn_blocking` task at a fixed cadence, never in the simulation loop.
+4. **Use YOLOv8n or YOLO11n (nano variants).** On M1 Pro ANE, YOLOv8n achieves 92+ FPS. Full YOLOv8m/l models are 3-5x slower and offer marginal accuracy improvement for vehicle counting (not fine-grained classification).
 
 **Warning signs:**
-- `enumerate_adapters()` returns only integrated GPU on multi-GPU systems
-- `request_adapter()` in Docker container returns `None` (known wgpu issue with discrete GPUs in containers)
-- Buffer copies between adapters hang or produce zeroed data
-- Compute pipeline creation on secondary adapter fails with "unsupported feature"
+- `ort::Session` created with GPU execution provider when ANE is available
+- Inference latency >10ms per frame on Apple Silicon (indicates GPU, not ANE)
+- `SimMetrics::frame_time_ms` increases proportionally with number of active cameras
+- GPU utilization stays at 100% continuously (both sim and ML competing) rather than showing distinct compute/render phases
 
 **Phase to address:**
-Phase 1 (Spike S2, Week 1-2). Binary GO/NO-GO. If NO-GO, immediately scope down to single-GPU 200K agents and save 4+ weeks of multi-GPU development.
+Phase 1 (ML Spike). Run a 2-day spike: export YOLOv8n to CoreML, run via `ort` with CoreML EP, measure ANE utilization (via Instruments > Neural Engine) while simulation compute is active. Verify zero GPU contention.
 
 ---
 
-### Pitfall 3: Wave-Front Dispatch Starves GPU Occupancy
+### Pitfall 3: 3D Building Mesh Loading Exhausts Metal GPU Memory Budget
 
 **What goes wrong:**
-Wave-front (Gauss-Seidel) dispatch processes agents sequentially within each lane. With an average of 5.6 agents/lane, each workgroup does only 5-6 sequential operations before idling. GPU compute shaders achieve peak throughput when workgroups run thousands of threads in parallel. At 5.6 agents/lane, GPU occupancy may be <10%, making wave-front slower than naive parallel dispatch despite its correctness advantages.
+HCMC Districts 1, 3, 5, 10, and Binh Thanh contain an estimated 80,000-120,000 buildings. Naive loading of extruded building footprints (from OSM data) as 3D meshes produces 5-15M triangles. At ~40 bytes per vertex (position + normal + UV), this requires 200-600 MB of GPU buffer space. Add a terrain mesh, road surface mesh, and texture atlases, and total GPU memory for 3D rendering reaches 500MB-1.5GB.
+
+The existing simulation already uses: position buffers (280K x 12B = 3.3MB), kinematics (280K x 8B = 2.2MB), IDM params (280K x 20B = 5.6MB), plus staging/readback buffers (~50MB total). The simulation's GPU memory is modest (~60MB), but Apple Silicon's unified memory is shared with the OS, apps, and the YOLO model (~30-50MB for YOLOv8n CoreML). On an M1 Pro with 16GB unified memory, the Metal GPU heap is capped at ~75% (12GB). After OS and app overhead, approximately 8-9GB is available. Loading 1.5GB of 3D geometry is feasible but leaves less headroom than expected.
+
+The real problem is not total memory but **allocation patterns**. Creating thousands of individual `wgpu::Buffer` objects (one per building) causes Metal heap fragmentation and driver overhead. wgpu's buffer creation has non-trivial CPU cost (~0.1ms per buffer), and 100K individual buffers = 10 seconds of buffer creation.
 
 **Why it happens:**
-The architecture's performance budget estimates 2ms for 280K agents, but this assumes full GPU utilization. With 50K workgroups each doing 5-6 sequential operations, the GPU is massively underutilized -- it has capacity for millions of concurrent threads. The sequential-within-lane constraint converts a massively parallel problem into 50K tiny serial chains. The 11x headroom estimate may be consumed entirely by low occupancy.
+Developers treat each OSM building as an independent mesh object, creating a separate vertex buffer and index buffer per building. This is the natural approach when loading GeoJSON/OSM data building-by-building. It works for 100 buildings in a demo but collapses at city scale. The wgpu buffer creation overhead is hidden behind the `create_buffer` API, which appears cheap but involves Metal heap allocation.
 
-**How to avoid:**
-1. **Spike S1 is non-negotiable.** The GO criterion (>40% of naive parallel throughput) is the right test. If wave-front achieves only 10-20% of parallel throughput, the architecture must pivot to EVEN/ODD with correction passes.
-2. **Benchmark with realistic lane distributions, not averages.** HCMC has arterials with 30 agents/lane and alleys with 0-1 agents/lane. The long-tail lanes dominate execution time because the GPU waits for the slowest workgroup.
-3. **Consider hybrid dispatch:** Wave-front for dense lanes (>10 agents), parallel for sparse lanes (<5 agents). The sparse lanes have negligible collision risk, making parallel dispatch safe.
-4. **Profile GPU occupancy explicitly** using platform tools (Metal System Trace on macOS, Nsight Compute on NVIDIA). Throughput numbers alone don't reveal the problem -- you need occupancy metrics.
+**Consequences:**
+- Application startup takes 10-30 seconds just for buffer creation (not counting mesh generation)
+- Draw call count exceeds 100K per frame (one per building), overwhelming the Metal command encoder
+- Metal heap fragmentation causes allocation failures for new simulation buffers mid-run
+- Memory pressure triggers macOS jetsam (process kill) on lower-memory configs (8GB M1)
+
+**Prevention:**
+1. **Batch all building geometry into a single vertex buffer + single index buffer.** Use a geometry atlas: pack all building vertices contiguously, store per-building offset/count in a separate metadata buffer. Draw with indirect draw calls or a single `draw_indexed()` with instance ID-based lookup.
+2. **Generate building geometry on GPU.** Upload only building footprint polygons (2D outlines + height) as a storage buffer. Use a compute shader or mesh shader (wgpu v28 supports mesh shaders on Metal) to extrude footprints to 3D on-the-fly. This reduces CPU-side data from ~600MB to ~20MB (footprints only).
+3. **Implement LOD (Level of Detail).** Buildings beyond 500m from camera: flat colored rectangles (4 vertices). Buildings 100-500m: extruded boxes (24 vertices). Buildings <100m: full detail (if available). This reduces visible triangle count from millions to 50K-200K.
+4. **Use frustum culling aggressively.** A typical viewport at street level shows 200-1000 buildings, not 100K. Implement CPU-side AABB frustum culling (or GPU-side via compute) to skip invisible buildings entirely.
+5. **Memory budget check at startup.** Query `adapter.limits()` for `max_buffer_size` and the Metal heap size. If available GPU memory < required 3D geometry, reduce LOD or coverage area dynamically.
 
 **Warning signs:**
-- GPU utilization <30% during compute dispatch (check with platform profiler)
-- Frame time not improving when reducing agent count (GPU is already idle)
-- Single dense arterial lane dominating total frame time (workgroup load imbalance)
-- Spike S1 result near the GO/NO-GO boundary (40-50% of parallel)
+- Buffer creation time >1 second during 3D scene loading
+- Draw call count >10K per frame (check with Metal GPU profiler)
+- `wgpu::Device::create_buffer` returning errors or panicking with "out of memory"
+- macOS "Your system has run out of application memory" warning
+- Simulation frame time degrades after loading 3D scene (not during loading, but during runtime)
 
 **Phase to address:**
-Phase 1 (Spike S1, Week 1-2). If marginal, implement the hybrid dispatch strategy in Phase 2 when real traffic patterns are available to profile against.
+Phase 2 (3D Rendering). Start with LOD + batched geometry from day one. Never create per-building buffers. The existing `Renderer` struct's pattern of pre-creating vertex buffers (see `TRIANGLE_VERTICES`, `RECTANGLE_VERTICES` in `renderer.rs`) is the right pattern -- extend it with a batched building geometry buffer.
 
 ---
 
-### Pitfall 4: deck.gl CPU Attribute Generation Blocks Rendering at 280K Points
+### Pitfall 4: Coordinate System Confusion Between Simulation, Geo, and Render Spaces
 
 **What goes wrong:**
-deck.gl generates vertex attributes on the CPU main thread by default. At 280K points with per-frame updates (10 Hz), the CPU must process 2.8M attribute updates per second. This blocks both rendering and user interaction. The dashboard becomes unresponsive -- mouse events queue behind attribute generation, creating 200-500ms input lag.
+VELOS currently operates in three coordinate systems that are about to become five:
+
+**Existing:**
+1. **Edge-local** (meters along an edge + lateral offset) -- used by ECS `Position` component
+2. **World-space** (projected meters, likely UTM or local Mercator) -- used by `AgentInstance.position` in renderer
+3. **NDC/clip space** (wgpu's [-1,1] x [-1,1] x [0,1]) -- used by camera's `view_proj` matrix
+
+**Adding:**
+4. **WGS84 geographic** (lat/lon degrees) -- used by camera feeds with geo-referenced positions, OSM building footprints, RTSP camera GPS metadata
+5. **3D world space** (x/y/z meters with elevation) -- needed for 3D building rendering and terrain
+
+Converting between these systems introduces bugs at every boundary. The most pernicious: wgpu uses a **different NDC** than OpenGL. wgpu's depth range is [0, 1] (not [-1, 1]). wgpu's Y-axis in NDC points up, but texture coordinates have Y pointing down. The existing 2D renderer avoids this by using a simple orthographic projection, but 3D rendering with perspective projection, depth buffers, and terrain elevation exposes every NDC difference.
+
+Additionally, the existing `Camera2D` in `camera.rs` produces a `view_proj_matrix()` using `glam::Mat4`. Switching to 3D perspective requires a fundamentally different camera model (position, look-at, up, FOV, near/far planes). If the 3D camera uses a different projection convention than the 2D orthographic (e.g., different handedness), agents will render at wrong positions in the 3D view.
 
 **Why it happens:**
-deck.gl's ScatterplotLayer and similar layers call accessor functions for each data element to build typed arrays for the GPU. At 280K elements, this JavaScript loop takes 30-80ms per frame depending on attribute count. Since this runs on the main thread, it blocks the browser's event loop. The deck.gl docs explicitly warn: "Built-in attribute generation can become a major bottleneck in performance since it is done on CPU in the main thread."
+Each subsystem chooses the coordinate system most natural for its domain. Edge-local is natural for car-following (1D position along a lane). WGS84 is natural for geo-data (OSM, camera GPS). NDC is defined by the GPU API. Without a single authoritative coordinate transform pipeline, each developer writes their own conversion, introducing subtle sign flips, axis swaps, or off-by-one-hemisphere errors. The classic bug: lat/lon swapped (y before x vs x before y), producing a mirror-image city.
 
-**How to avoid:**
-1. **Pre-calculate binary attributes server-side.** Send pre-packed Float32Arrays via WebSocket in the exact format deck.gl expects. Use `data: {length: N, attributes: {getPosition: {value: float32Array, size: 3}}}` to bypass accessor functions entirely. This is deck.gl's highest-performance data path.
-2. **Viewport-based filtering.** Only send agents visible in the current viewport. At typical zoom levels, visible agents are 5K-30K, not 280K. The server must know the client's viewport bounds (send them via WebSocket).
-3. **Use server-side aggregation for zoomed-out views.** When zoomed out to see all 5 districts, individual agents are sub-pixel. Send density heatmap tiles instead of individual points. Switch to individual agents when zoomed in past a threshold.
-4. **Use WebWorkers for attribute generation** if server-side pre-packing is not feasible. Offload the typed array construction to a worker thread so the main thread stays responsive.
+**Consequences:**
+- Agents appear at wrong positions in 3D view (common: z-fighting with terrain, or agents floating above roads)
+- Building footprints shifted by hundreds of meters (UTM zone mismatch or WGS84 datum confusion)
+- Camera detection bounding boxes don't align with simulation positions (detection says "vehicle at lat,lon" but simulation has no agent at that projected position)
+- Depth buffer artifacts: agents rendered behind buildings when they should be in front (depth range mismatch)
+
+**Prevention:**
+1. **Define a single canonical world coordinate system.** Use UTM Zone 48N (EPSG:32648) centered on HCMC. All data enters the system through a conversion from its native CRS to UTM 48N meters. All rendering uses UTM coordinates, with the camera projection converting to NDC. Document this in a `coords.rs` module with explicit conversion functions.
+2. **Use `glam::Mat4::perspective_rh` (right-handed) for 3D.** wgpu uses a right-handed coordinate system with Y-up, Z into the screen, depth [0,1]. The OpenGL-to-wgpu correction matrix (`OPENGL_TO_WGPU_MATRIX` from learn-wgpu) must be applied if using any math library that assumes OpenGL conventions.
+3. **Build coordinate transform tests from day one.** Test: convert a known HCMC intersection (e.g., Ben Thanh Market: 10.7725N, 106.6981E) from WGS84 -> UTM -> world-space -> clip-space -> screen pixels. Verify the pixel position matches the expected screen location. Run this test on every commit.
+4. **Camera detection geo-referencing needs a calibration pipeline.** A camera's RTSP stream has pixel coordinates, not world coordinates. Converting detected bounding boxes to simulation positions requires camera intrinsics (focal length, distortion) + extrinsics (position, orientation). This is a full camera calibration problem, not just a coordinate transform.
 
 **Warning signs:**
-- Dashboard FPS drops below 10 when simulation is running at 10 Hz
-- Mouse pan/zoom has visible lag (>100ms response)
-- Browser DevTools "Long Task" warnings during WebSocket message processing
-- CPU usage at 100% on a single core in the browser tab
+- Buildings and agents rendering in different positions that are offset by a constant amount
+- Detected vehicles from camera CV appearing in wrong simulation edges
+- Z-fighting (flickering) between terrain surface and road network
+- 3D scene appears mirrored or upside-down when first implemented
+- `Camera2D` and new `Camera3D` produce different world positions for the same screen pixel
 
 **Phase to address:**
-Phase 2 (Visualization). When the agent count increases from 10K (G1) to 280K (G3), the visualization pipeline must switch from accessor-based to binary attribute streaming. This should be designed from the start but becomes critical at G3.
+Phase 1 (Foundation). Define the coordinate pipeline before any 3D or CV code. The `coords.rs` module with tested conversion functions must exist before Phase 2 begins.
 
 ---
 
-### Pitfall 5: Fixed-Point Arithmetic Performance Penalty Exceeds Budget
+### Pitfall 5: Video Decode Pipeline Stalls Simulation Tick on Main Thread
 
 **What goes wrong:**
-The architecture estimates a 20% performance penalty for fixed-point over float32, based on manual 64-bit emulation in WGSL. Real-world penalty is likely 40-80% because: (a) every multiply requires 4 partial products + carries, (b) the IDM acceleration formula has 6+ multiplications per agent per step, (c) branch divergence from overflow checks reduces SIMT efficiency. At 280K agents, this could push frame time from 8ms to 14-18ms, consuming the entire headroom budget.
+RTSP camera streams are decoded on the CPU main thread or a `tokio` async task, but the decoded frames must be uploaded to GPU memory for ML inference. The decode -> upload -> infer pipeline introduces multiple blocking points:
+
+1. **RTSP network I/O**: TCP/UDP reads are async but unpredictable (network jitter, packet loss, retransmits). A dropped packet causes ffmpeg to wait for retransmission (TCP) or produce a corrupt frame (UDP).
+2. **Video decode**: Even with VideoToolbox hardware acceleration, decoded frames land in a `CVPixelBuffer` (macOS) or system memory. Getting pixels into a format suitable for YOLO input (typically RGB 640x640 float32) requires color space conversion (YUV -> RGB) and resize.
+3. **Frame upload**: The decoded/preprocessed frame must reach the ML inference engine. If using wgpu compute for inference (pitfall 2), this means a `queue.write_buffer()` call that can stall if the GPU is busy.
+
+The critical mistake: calling `ffmpeg` decode synchronously in the simulation tick loop. Even with VideoToolbox, a single 1080p H.264 frame decode takes 1-3ms. With 4 cameras, that's 4-12ms added to every simulation frame, consuming half the 8ms compute budget.
 
 **Why it happens:**
-The 20% estimate comes from simple microbenchmarks (single multiply). The IDM formula chains multiplications: `s_star = s0 + v*T + (v*delta_v)/(2*sqrt(a*b))`. Each `*` is a fix_mul with 4 partial products. The `sqrt` in fixed-point requires iterative approximation (Newton-Raphson, 4-6 iterations). The total cost compounds multiplicatively, not additively.
+Camera integration code is often prototyped with synchronous blocking calls ("just get it working"). The `retina` RTSP crate for Rust is async (tokio-based), but converting RTP/H.264 NAL units to decoded frames requires ffmpeg (via `ffmpeg-next` crate), which is synchronous. Bridging async RTSP -> sync ffmpeg -> async upload creates thread-blocking points that are invisible until profiled.
 
-**How to avoid:**
-1. **Defer fixed-point to Phase 3 or later.** The architecture already marks it as "optional" and provides an `@invariant` float32 fallback. Take the fallback. Cross-GPU determinism is a nice-to-have for POC, not a requirement.
-2. **If fixed-point is required, profile the FULL IDM formula** (not just `fix_mul`) before committing. Build a WGSL benchmark that runs the complete agent update with all IDM terms in fixed-point vs. float32. The compound cost is what matters.
-3. **Consider mixed precision:** Use float32 for intermediate IDM computation, convert to fixed-point only for position/speed storage. This gives deterministic state while allowing fast float computation.
-4. **Investigate `@invariant` on Metal/Vulkan.** If the Metal shader compiler respects `@invariant` for compute outputs (not just vertex outputs), float32 may be deterministic enough on a single GPU vendor. Test empirically before assuming non-determinism.
+**Consequences:**
+- Simulation frame time becomes dependent on camera stream health (network issues = sim stalls)
+- Dropped RTSP connections cause the sim loop to hang waiting for reconnection
+- VideoToolbox decode failures (corrupt stream, unsupported codec) crash the entire application
+- Memory pressure from buffering undecoded RTSP frames (each 1080p I-frame: ~200KB)
+
+**Prevention:**
+1. **Run video decode on dedicated `std::thread` workers, not tokio or the sim loop.** One thread per camera stream. Decode produces frames into a bounded `crossbeam::channel` (capacity: 2-3 frames). The simulation tick reads the latest frame non-blockingly (`try_recv`). If no new frame is available, use the previous frame (detection on stale frames is better than stalling simulation).
+2. **Use VideoToolbox via ffmpeg for hardware decode.** Configure `ffmpeg-next` with `-hwaccel videotoolbox` equivalent (`set_hwaccel("videotoolbox")`). This offloads H.264/H.265 decode to Apple's dedicated media engine, which is separate from both GPU and ANE. Decode latency drops from 3-5ms (CPU) to <1ms (media engine).
+3. **Decouple detection rate from decode rate.** Decode at stream rate (25-30 FPS) but run detection at 5 FPS. Buffer the latest decoded frame; the detection thread grabs it when ready. Do not queue frames for detection -- always use the freshest frame.
+4. **Handle stream failures gracefully.** Wrap each camera stream in a supervisor that reconnects with exponential backoff. A dead camera must never block or crash the simulation. Log the failure, mark detection data as stale, continue running.
 
 **Warning signs:**
-- Frame time doubles when switching from float32 to fixed-point in the IDM shader
-- Fixed-point `sqrt` approximation consuming >50% of per-agent compute time
-- Engineers spending weeks debugging fixed-point overflow edge cases instead of building features
-- Determinism requirement not actually needed until multi-GPU (Phase 2+)
+- `sim_time` advances in bursts (multiple 0.1s steps, then a pause) correlated with camera frame arrivals
+- `frame_time_ms` has bimodal distribution (fast frames without decode, slow frames with decode)
+- Memory usage grows continuously (unbounded frame buffer)
+- Application hangs when a camera stream disconnects
+- CPU core at 100% on one core (ffmpeg decode blocking a tokio worker)
 
 **Phase to address:**
-Phase 3 (Calibration/Hardening). Fixed-point is optional in the roadmap. Use float32 for Phase 1-2. Only implement fixed-point if multi-GPU cross-device determinism is validated as a real requirement (not theoretical).
+Phase 2 (Camera Integration). The video decode pipeline architecture must be designed before connecting any RTSP streams. Build the bounded-channel, dedicated-thread pattern first, test with a local video file, then add RTSP.
 
 ---
 
-### Pitfall 6: Meso-Micro Transition Creates Velocity Discontinuities and Phantom Congestion
+### Pitfall 6: Adding Depth Buffer and 3D Render Passes Breaks Existing 2D Pipeline
 
 **What goes wrong:**
-When agents transfer from the mesoscopic queue model to microscopic simulation (or vice versa), their velocity and spacing jump discontinuously. Meso models track aggregate flow; micro models track individual vehicle kinematics. An agent leaving a meso queue at free-flow speed and entering micro simulation finds itself 2m behind a slower leader, causing emergency braking. Conversely, agents entering meso from micro lose their individual spacing, and when they exit meso back to micro, they're evenly spaced at the queue model's average headway, regardless of their original micro spacing. This creates artificial congestion waves at every meso-micro boundary.
+The existing `Renderer` in `renderer.rs` uses a 2D pipeline with **no depth buffer** (`depth_stencil: None` at line 237 and 285, `depth_stencil_attachment: None` at line 478). Agents are drawn in order: road lines first, then motorbikes, then cars, then pedestrians. This painter's algorithm works because everything is flat.
+
+Adding 3D buildings requires a depth buffer. But the existing render pipeline was created without depth-stencil state. You cannot mix pipelines with and without depth testing in the same render pass without explicitly handling the depth attachment. The common mistake: developers add a depth buffer for 3D buildings but forget to update the existing agent pipeline to write/test depth. Result: agents always render on top of buildings (or always behind buildings), regardless of actual position.
+
+Even worse: the current `Camera2D` uses an orthographic projection where Z is always 0 (see `agent_render.wgsl:38` -- `vec4<f32>(rotated + inst.world_pos, 0.0, 1.0)`). All agents have Z=0, so a depth buffer test with buildings at Z=10 (roof height) will either always pass or always fail, depending on the depth function.
 
 **Why it happens:**
-This is a fundamental modeling challenge documented extensively in hybrid simulation literature. The meso model uses segment-level aggregate speed; the micro model uses vehicle-level IDM. At the boundary, there is no smooth interpolation -- the agent jumps from one model to another. The 100m graduated buffer zone in the architecture helps but does not eliminate the problem, because the velocity-matching insertion must correctly account for the acceleration profile of the target model.
+Adding 3D to an existing 2D renderer seems like an incremental change ("just add depth and a perspective camera"). But the 2D pipeline's assumptions are deeply embedded: no depth state in pipeline creation, Z hardcoded to 0 in the vertex shader, orthographic projection, no face culling. Each of these must change simultaneously, and forgetting any one produces incorrect rendering.
 
-**How to avoid:**
-1. **Velocity-matching insertion with warm-up distance.** When an agent enters micro from meso, spawn it 200m upstream of the meso-micro boundary with the meso segment's average speed. Let IDM naturally adjust over those 200m. Do not insert at the boundary with an instantaneous velocity assignment.
-2. **Graduated acceleration constraints.** In the 100m buffer zone, linearly interpolate between meso constraints (no acceleration model) and micro constraints (full IDM). Buffer zone agents use a simplified IDM with relaxed parameters.
-3. **Validate boundary flow conservation.** The total flow (vehicles/hour) crossing the boundary must be equal on both sides. If meso pushes more agents than micro can absorb (because micro has tighter spacing), agents queue in the buffer and congestion propagates into the meso region.
-4. **Benchmark against a full-micro baseline.** Run the same scenario with full micro on the entire network (at reduced agent count if needed). Compare travel times at meso-micro boundaries. If boundary travel time exceeds full-micro by >10%, the transition is injecting artificial delay.
+**Consequences:**
+- Agents invisible (rendered behind terrain at Z=0 while terrain is at Z=0 too -- depth fighting)
+- Buildings transparent (depth write disabled on building pipeline but enabled on agent pipeline)
+- Performance regression from unnecessary depth testing on 2D elements
+- Z-fighting flickering at road/terrain boundary
+
+**Prevention:**
+1. **Redesign the render pipeline as a multi-pass system from scratch.** Do not retrofit depth into the existing `Renderer`. Create a new `Renderer3D` that owns the full pipeline:
+   - Pass 1: Terrain + buildings (opaque, depth write ON, depth test ON)
+   - Pass 2: Road network on terrain surface (depth test ON, depth write OFF, polygon offset to prevent z-fighting)
+   - Pass 3: Agents as 3D objects or billboards (depth test ON, depth write ON)
+   - Pass 4: Transparent overlays, egui (depth test OFF)
+2. **Assign meaningful Z values to agents.** Agents should be positioned at road surface elevation + a small offset (0.1-0.5m). This requires the road network to have elevation data (from terrain DEM) or a flat assumption (all roads at Z=0, buildings extruded upward).
+3. **Keep the 2D renderer as a fallback.** The existing `Renderer` works. Do not delete it. Make 3D rendering toggleable (user presses a key to switch between 2D top-down and 3D perspective). This preserves a known-good rendering path while developing 3D.
+4. **Create a shared depth texture.** The depth texture must persist across all render passes in a frame. Create it once per frame (or reuse with clear), attach to all passes that need it.
 
 **Warning signs:**
-- Speed profiles show a consistent dip at every meso-micro boundary (visible in FCD output)
-- Queue spillback from micro into meso that doesn't exist in a full-micro run
-- Agents bunching at meso-micro transition points (visible in deck.gl heatmap)
-- Calibration GEH failing specifically on links near meso-micro boundaries
+- First 3D render attempt shows buildings but no agents (or agents but no buildings)
+- Flickering at terrain/road boundary (z-fighting from equal Z values)
+- Agent shapes look wrong in 3D (2D triangles viewed at an angle are paper-thin)
+- Render pass validation errors from wgpu about mismatched depth-stencil state
+- Performance drops >2x when depth testing is enabled (unexpected overdraw)
 
 **Phase to address:**
-Phase 3 (Weeks 25-28 per roadmap). The meso-micro buffer is E1's responsibility. Build it with validation against a full-micro reference scenario before integrating with the calibration loop.
+Phase 2 (3D Rendering). Design the multi-pass pipeline before writing shaders. The `Renderer3D` should be a new struct, not a modification of the existing `Renderer`.
 
 ---
 
-### Pitfall 7: Docker Container Cannot Access GPU via wgpu
+### Pitfall 7: Async Camera Inference Results Arrive at Wrong Simulation Time
 
 **What goes wrong:**
-Containerizing the Rust simulation engine in Docker, wgpu's `request_adapter()` returns `None` even though `nvidia-smi` works inside the container. The simulation fails to start. This is a known wgpu issue specifically with discrete GPUs in Docker containers. The NVIDIA Container Toolkit exposes GPU compute capabilities (CUDA), but wgpu uses Vulkan (not CUDA), and the Vulkan ICD (Installable Client Driver) loader needs separate configuration.
+Camera detection runs asynchronously: a camera frame captured at wall-clock T0 is decoded, preprocessed, and run through YOLO inference. The detection result (vehicle counts, positions) arrives at wall-clock T0 + 50-200ms (decode + inference + postprocessing latency). Meanwhile, the simulation has advanced 1-2 timesteps. The detection result describes traffic conditions at T0, but the simulation is now at T0 + 0.1-0.2s.
+
+For demand calibration, this lag is acceptable (aggregate counts over minutes). For real-time simulation adjustment (e.g., "detected 5 cars entering intersection X, spawn them in sim"), the lag causes agents to spawn 1-2 timesteps late, creating a growing divergence between camera reality and simulation state. Over time, this accumulates: the simulation's traffic density at camera-visible intersections drifts from reality.
 
 **Why it happens:**
-NVIDIA Container Toolkit sets `NVIDIA_DRIVER_CAPABILITIES=compute,utility` by default, which exposes CUDA but not Vulkan graphics/display capabilities. wgpu on Linux uses Vulkan, which requires `NVIDIA_DRIVER_CAPABILITIES=all` or `NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics,display`. Additionally, the Vulkan ICD JSON files (`/usr/share/vulkan/icd.d/`) must be mounted into the container, and `libvulkan.so` must be available.
+Developers treat detection results as "current state" when they are actually "stale observation." The async pipeline hides the latency -- a detection callback fires, the handler reads the result, and assumes it's fresh. There is no timestamp correlation between the camera frame and the simulation clock.
 
-**How to avoid:**
-1. **Set `NVIDIA_DRIVER_CAPABILITIES=all`** in the Docker environment or compose file.
-2. **Install Vulkan loader in the container.** Add `libvulkan-dev` (Debian) or `vulkan-loader` (Alpine) to the Dockerfile.
-3. **Mount Vulkan ICD files.** Map `/usr/share/vulkan/icd.d/` from host to container.
-4. **Use `--gpus all` flag** in `docker run`, or `deploy.resources.reservations.devices` in Docker Compose.
-5. **Test container GPU access early.** Build a minimal Docker image that runs `wgpu::Instance::enumerate_adapters()` and prints results. Do this before containerizing the full simulation.
-6. **For macOS development**, GPU passthrough to Docker is not supported. Docker containerization is a deployment concern for Linux servers only. Develop natively on macOS, deploy in Docker on Linux.
+**Consequences:**
+- Agent spawning at camera-observed intersections is consistently late
+- Calibration feedback loop oscillates (overcompensates because detection sees old state)
+- Detection-driven signal adjustment responds to traffic conditions that have already changed
+- Impossible to reproduce/validate: the timing offset varies with system load
+
+**Prevention:**
+1. **Timestamp every camera frame with the simulation clock, not wall clock.** When a camera frame is captured, record the current `sim_time`. When the detection result arrives, tag it with the originating `sim_time`. The simulation can then decide whether the result is still relevant (e.g., discard if >0.5s stale).
+2. **Use detection for aggregate calibration, not real-time spawning.** Camera detections feed a rolling average of vehicle counts per intersection over 5-60 second windows. The demand calibration system adjusts OD matrix weights based on these aggregates, not individual detections. This is robust to latency.
+3. **Never block the sim loop waiting for detection results.** Use `ArcSwap` (already used in `velos-predict` for prediction overlays) to atomically publish detection results. The simulation reads the latest available result without blocking.
+4. **Build a latency histogram.** Track `detection_latency = sim_time_at_result_arrival - sim_time_at_frame_capture`. Alert if p95 exceeds 0.5s simulation time. This metric surfaces degradation before it affects calibration quality.
 
 **Warning signs:**
-- `nvidia-smi` works in container but wgpu finds no adapters
-- `VK_ERROR_INITIALIZATION_FAILED` in container logs
-- Container runs fine with CPU fallback but GPU dispatch fails
-- Works on bare metal, fails in Docker with identical binary
+- Calibration GEH metric oscillates rather than converging
+- Agent counts at camera intersections consistently lag behind camera-observed counts
+- Detection result processing shows in `frame_time_ms` spikes (blocking the sim loop)
+- `ArcSwap` not used -- detection results processed synchronously in sim tick
 
 **Phase to address:**
-Phase 4 (Infrastructure/Deployment). Docker containerization happens late in the timeline but should be validated with a minimal wgpu-in-Docker test during Phase 2 to avoid a surprise at deployment time.
+Phase 2 (Camera-Sim Integration). Design the timestamp correlation and `ArcSwap` publication pattern before connecting detection to the simulation. Test with simulated detection delays (inject artificial 50-200ms latency) to validate the aggregate calibration approach is robust.
 
 ---
 
-## Technical Debt Patterns
+## Moderate Pitfalls
 
-| Shortcut | Immediate Benefit | Long-term Cost | When Acceptable |
-|----------|-------------------|----------------|-----------------|
-| Keep CPU physics path alongside GPU | Easier debugging, test reference | Two code paths to maintain, bugs only manifest on GPU path, false confidence that GPU works | Never for v1.1. Kill CPU physics path immediately. Use GPU validation compute pass for debugging |
-| Skip viewport filtering in WebSocket stream | Simpler server, all clients get same data | 280K-point JSON/binary messages overwhelm browser at 10 Hz. 100 concurrent viewers = 2.8M points/sec/client | Phase 1 only (10K agents). Must implement before G3 (280K) |
-| Use A* until CCH is ready | No preprocessing delay, familiar code from v1.0 | At 500 reroutes/step, A* costs ~250ms vs CCH's ~0.7ms. Makes prediction-driven rerouting infeasible | Phase 1 only (<10K agents, no rerouting). Replace before Phase 2 prediction integration |
-| Single Redis instance for pub/sub | Simple ops, no cluster management | Redis pub/sub is fire-and-forget (no backpressure). Slow subscribers drop messages silently. At 10 Hz x 100 viewers, a single Redis instance may hit memory limits | Acceptable for <20 viewers. Cluster or add backpressure monitoring before 100-viewer load test |
-| Parquet checkpoints as synchronous writes | Simpler checkpoint logic | At 280K agents, Parquet serialization takes 200-500ms, blocking the sim loop. At 10 Hz, this is 2-5 missed frames per checkpoint | Never synchronous. Use `tokio::spawn_blocking` from day one. Cost is minimal, benefit is immediate |
-| Skip METIS for partition, use geographic split | No METIS dependency, simpler code | Geographic splits (by district) produce unbalanced partitions. D1 has 3x the road density of D10. GPU0 overloaded, GPU1 idle | Only if METIS integration proves too complex. Monitor partition balance: max agents on any GPU / average agents should be < 1.3 |
+### Pitfall 8: wgpu NDC Depth Range and Projection Matrix Mismatch
 
-## Integration Gotchas
+**What goes wrong:**
+wgpu uses a depth range of [0, 1] (Metal and DX12 convention), not [-1, 1] (OpenGL convention). Most math libraries (including `glam`) produce projection matrices with OpenGL conventions by default. Using `glam::Mat4::perspective_rh` without the depth range correction produces a projection matrix that maps depth to [-1, 1]. Objects at the near plane get depth -1, which is outside wgpu's [0, 1] range, and are clipped.
 
-| Integration | Common Mistake | Correct Approach |
-|-------------|----------------|------------------|
-| wgpu compute in Docker | Assuming `nvidia-smi` working = wgpu working. wgpu uses Vulkan, not CUDA. | Set `NVIDIA_DRIVER_CAPABILITIES=all`, install `libvulkan-dev`, mount Vulkan ICD files. Test wgpu adapter enumeration in a minimal container before building full image |
-| deck.gl + WebSocket binary frames | Sending JSON objects for 280K agent positions. JSON parse time alone is 50-100ms per frame | Send pre-packed Float32Arrays in binary WebSocket frames. Use `data.attributes` API to bypass deck.gl accessor functions. Binary is 10-50x faster than JSON for large point datasets |
-| Redis pub/sub + WebSocket relay | Publishing full 280K-agent frame to a single Redis channel. All relay pods receive all data regardless of client viewport | Partition into spatial tiles (e.g., 500m grid cells). Each tile is a separate Redis channel. Relay pods subscribe only to channels matching their connected clients' viewports |
-| tonic gRPC + simulation state | Holding a lock on the ECS world while serializing a gRPC response. This blocks the simulation loop for the entire serialization duration | Snapshot simulation state into a read-only buffer at the end of each step (already needed for GPU readback). gRPC handlers read from the snapshot, never from live ECS state |
-| CCH + prediction ensemble | Running CCH weight customization synchronously in the sim loop when prediction updates arrive. Customization takes 3-10ms, which is acceptable but adds jitter to frame time | Use `ArcSwap` pattern: prediction writes new weights to a new CCH metric, atomically swaps it in. Sim loop reads the currently-active metric with zero blocking. The architecture already specifies this -- do not deviate |
-| Parquet checkpoints + hecs ECS | Iterating hecs archetypes in arbitrary order, producing non-deterministic Parquet row ordering. Checkpoint restore recreates entities in different order, breaking GPU buffer index mapping | Assign a stable `AgentId` (monotonic u32) to each agent. Sort by AgentId before Parquet write. On restore, rebuild the `AgentId -> gpu_buffer_index` mapping. Never rely on hecs entity insertion order |
-| egui desktop -> deck.gl web migration | Trying to port egui UI components to React/deck.gl incrementally while maintaining both frontends | Clean break. Build deck.gl dashboard from scratch using the gRPC/WebSocket API. Do not attempt to share UI state between egui and React. The API layer is the interface boundary |
-| rayon + tokio in same binary | Using `block_on` inside a rayon thread (deadlocks tokio runtime) or using `tokio::spawn` for CPU-bound simulation work (starves async tasks) | Strict separation: rayon owns CPU-bound simulation work (physics, sorting, pathfinding). tokio owns I/O (gRPC, WebSocket, Parquet writes). Bridge via `tokio::sync::mpsc` channels. Never cross runtimes |
+The existing `Camera2D` works because orthographic 2D rendering maps everything to Z=0, which falls within any depth range. A 3D perspective camera immediately exposes this mismatch.
 
-## Performance Traps
+**Prevention:**
+1. Use `glam::Mat4::perspective_rh` and apply the OpenGL-to-wgpu correction matrix:
+   ```rust
+   pub const OPENGL_TO_WGPU_MATRIX: glam::Mat4 = glam::Mat4::from_cols_array(&[
+       1.0, 0.0, 0.0, 0.0,
+       0.0, 1.0, 0.0, 0.0,
+       0.0, 0.0, 0.5, 0.5,
+       0.0, 0.0, 0.0, 1.0,
+   ]);
+   ```
+   Apply as: `let proj = OPENGL_TO_WGPU_MATRIX * glam::Mat4::perspective_rh(fov, aspect, near, far);`
+2. Or use `glam::Mat4::perspective_rh_wgpu()` if available in the glam version used.
+3. Write a test: project a point at the near plane and verify its NDC Z is 0.0, not -1.0.
 
-| Trap | Symptoms | Prevention | When It Breaks |
-|------|----------|------------|----------------|
-| Sending 280K agent positions over WebSocket at 10 Hz without spatial filtering | Browser tab crashes, WebSocket connection drops, Redis memory spikes | Viewport-based filtering: server only sends agents in client's visible bbox. Server-side density aggregation at low zoom | >50K agents without filtering; >10K agents without binary encoding |
-| Single wgpu buffer for all agent data (no SoA) | Cannot update positions without re-uploading velocities, routes, profiles. Upload bandwidth becomes bottleneck | Structure-of-Arrays buffer layout. Separate GPU buffers for position, kinematics, route index. Update only changed buffers per frame | >100K agents with per-frame full-buffer uploads |
-| GPU->CPU readback every frame for all agents | PCIe bandwidth consumed by 280K * 52 bytes = 14.5 MB per frame at 10 Hz = 145 MB/s | Read back only what the API needs: positions + speeds for visualization (280K * 12 bytes = 3.4 MB). Route/profile data stays GPU-resident. Use async readback (double-buffered map) | >100K agents with full-state readback at 10 Hz |
-| Per-lane sorting on CPU before GPU dispatch | At 50K lanes, even with rayon, radix sort costs 2-5ms. Exceeds per-step CPU budget | Maintain sorted order incrementally. Agents rarely change lanes (<1%/step). Use insertion sort for lane-changed agents only. Or GPU-side bitonic sort | >20K lanes with full re-sort each step |
-| CCH customization triggered by every prediction update | Prediction updates every 60 sim-seconds (600 steps), but intermediate partial updates also trigger customization. 6 customizations per minute at 3-10ms each | Batch prediction updates. Only trigger CCH customization when the full ensemble update completes, not on partial results. Use a dirty flag + update-on-next-step pattern | >10 customization triggers per sim-minute |
-| Parquet checkpoint writes blocking sim loop | At 280K agents, serializing to Parquet takes 200-500ms. Sim loop stalls for 2-5 frames at 10 Hz | Write checkpoints asynchronously. Clone the state snapshot (cheap: 280K * 52 bytes = 14.5 MB memcpy), send to a background tokio task. Sim loop continues immediately | Any checkpoint write of >50ms without async offload |
-| Redis pub/sub message accumulation for slow subscribers | Redis accumulates unsent messages for slow WebSocket clients. Memory grows unbounded. Redis OOM kills the process | Set per-client message TTL. If a client falls behind by >5 frames, drop intermediate frames and send only the latest. Monitor Redis `used_memory` and `pubsub_channels` metrics | >50 concurrent viewers with heterogeneous network speeds |
+**Phase to address:** Phase 2 (3D Rendering). First task when implementing `Camera3D`.
 
-## Security Mistakes
+---
 
-| Mistake | Risk | Prevention |
-|---------|------|------------|
-| gRPC API without authentication for simulation control (start/stop/reset) | Anyone on the network can stop or corrupt a running simulation. Calibration runs ruined by accidental or malicious API calls | Add API key authentication at minimum. For internal deployment, use mTLS between services. Rate-limit destructive operations (reset, parameter change) |
-| WebSocket endpoint accepts arbitrary viewport coordinates | Malicious client sends viewport covering entire world, server sends full 280K agent stream. 100 such clients = DoS | Server-side viewport validation. Clamp viewport to HCMC bounding box. Rate-limit viewport change requests (max 10/sec). Cap per-client bandwidth |
-| Parquet checkpoint files contain full simulation state including calibration parameters | Checkpoint files shared externally expose proprietary calibration data (OD matrices, signal timings, demand profiles) | Separate state checkpoints (agent positions/speeds) from calibration data (parameters, OD matrices). Encrypt calibration data at rest. Add access control to checkpoint storage |
-| Docker container runs wgpu as root | GPU device files (/dev/nvidia*) require specific permissions. Running as root is common workaround but exposes host filesystem | Use NVIDIA Container Toolkit's `--user` flag. Map only required device files. Run simulation process as non-root user inside container |
+### Pitfall 9: CoreML Model File Deployment and Cold Start Latency
 
-## UX Pitfalls
+**What goes wrong:**
+CoreML models (`.mlpackage` or `.mlmodelc`) need compilation on first use. The first inference call triggers model compilation that can take 5-30 seconds. This happens every time the application starts unless the compiled model is cached. Additionally, CoreML models are macOS-specific -- they cannot be used on Linux (where the production deployment may eventually run).
 
-| Pitfall | User Impact | Better Approach |
-|---------|-------------|-----------------|
-| Showing 280K individual dots at city-wide zoom level | Visual noise -- individual agents are sub-pixel at city scale. Browser rendering slows to <5 FPS | Level-of-detail rendering: heatmap/flow-lines at city zoom, individual agents at street zoom. Switch at a defined zoom threshold. Common in deck.gl applications |
-| No indication of sim-time vs wall-time ratio | User runs scenario expecting "real-time" but simulation is actually 5x faster or 0.5x slower. Results misinterpreted | Permanent display: "Sim: 07:32:15 | Wall: 0:04:12 | Speed: 1.8x". Flash when speed multiplier changes. Pause indicator must be unmissable |
-| Dashboard loads empty while simulation initializes | First-time user sees blank map for 5-10 seconds during 280K agent spawn. Assumes system is broken | Show loading progress: "Spawning agents: 142K / 280K". Render road network immediately (from PMTiles). Add agents incrementally as they spawn |
-| Multi-GPU partition boundaries visible as rendering artifacts | Agents near partition boundaries flicker or jump as they transfer between GPUs. Visible as a line across the map | Overlap boundary visualization by 50m. Both GPUs render agents in the overlap zone. Client-side deduplication by agent ID. Or: render from a single merged position buffer (CPU merges GPU outputs before sending to viz) |
-| WebSocket disconnect not handled gracefully | User's browser loses connection (laptop sleep, network hiccup). Dashboard freezes on last received frame with no indication | Heartbeat ping/pong (every 5s). On disconnect: show "Reconnecting..." overlay. Auto-reconnect with exponential backoff. On reconnect: request full state snapshot, not just deltas |
+**Prevention:**
+1. **Pre-compile CoreML models at build time.** Use `coremltools` (Python) to compile `.mlpackage` to `.mlmodelc` during the build process. Ship the compiled model.
+2. **Use ONNX as the portable format.** Keep `.onnx` as the canonical model format. Use `ort` with CoreML EP on macOS (auto-compiles to CoreML internally) and `ort` with CPU/CUDA EP on Linux. The same Rust code works on both platforms.
+3. **Warm up the model at startup.** Run one dummy inference during `SimWorld` initialization to trigger compilation. Log the warmup time. Accept the 5-30s startup cost once.
+4. **Cache compiled models.** CoreML caches compiled models in `~/Library/Caches/`. Ensure the cache directory is persistent across runs.
 
-## "Looks Done But Isn't" Checklist
+**Phase to address:** Phase 1 (ML Spike). Validate CoreML cold start during the YOLO spike. Measure startup time and document it.
 
-- [ ] **Multi-GPU partitioning:** Often missing overlap zone for boundary agents. Agent crosses boundary but neither GPU claims it for 1 step -- agent disappears for a frame then reappears. Verify: track boundary-crossing agents, confirm zero missed steps.
-- [ ] **CCH weight customization:** Often missing invalidation of cached shortest paths after weight update. Agents rerouted before the update continue on stale routes that may now be suboptimal. Verify: after customization, rerouted agents use fresh CCH queries.
-- [ ] **Prediction ensemble:** Often missing the cold-start problem. Historical matcher has no history for the first simulated hour. BPR needs baseline free-flow speeds. Verify: first 600 sim-seconds produce reasonable predictions (test with known demand).
-- [ ] **Parquet checkpoint restore:** Often missing GPU buffer re-upload. ECS state loads from Parquet but GPU buffers still contain stale data. The v1.0 PITFALLS.md flagged this -- it remains critical at 280K scale. Verify: restore checkpoint, advance 1 step, compare against a reference run.
-- [ ] **WebSocket binary protocol:** Often missing endianness specification. Server (Rust, little-endian on x86) sends Float32Array bytes. Browser on ARM64 (big-endian possible) misinterprets. Verify: test with explicit endian check; use DataView on client.
-- [ ] **Redis pub/sub spatial tiling:** Often missing tile boundary agents. An agent at the exact boundary of two tiles is sent in neither tile's channel. Verify: agents within 10m of tile boundaries appear in adjacent tiles (overlap).
-- [ ] **gRPC streaming:** Often missing backpressure handling. If the gRPC client doesn't consume messages fast enough, tonic buffers grow unbounded. Verify: slow client test -- connect a gRPC client that reads 1 message/sec while server produces 10/sec.
-- [ ] **Calibration GEH:** Often missing the distinction between "link volume" GEH and "turning movement" GEH. GEH < 5 on link volumes can mask terrible turning movement accuracy. Verify: compute GEH separately for link volumes and turning movements at key intersections.
-- [ ] **Docker health check:** Often missing GPU health in container health check. Container reports "healthy" (HTTP 200 from API) but GPU compute has silently failed (device lost). Verify: health check endpoint runs a trivial GPU dispatch and reports GPU status.
+---
+
+### Pitfall 10: 3D Agent Models Replace 2D Instancing, Killing Performance
+
+**What goes wrong:**
+The current renderer uses 2D instanced rendering: 3-6 vertices per agent shape, one draw call per agent type. This is extremely efficient -- 280K agents = 280K instances = 3 draw calls. Replacing 2D shapes with 3D vehicle models (even low-poly: 100-500 triangles per vehicle) increases vertex count from ~1.7M to 28-140M triangles. This is a 16-82x increase in rasterization work.
+
+Even more damaging: 3D models require per-model vertex buffers with different vertex layouts (position + normal + UV vs. the current position-only layout). Different vehicle types need different meshes (motorbike mesh, car mesh, bus mesh, truck mesh). Each mesh type requires a separate draw call with a different vertex buffer binding.
+
+**Prevention:**
+1. **Keep 2D instancing for distant agents.** Switch to 3D models only for agents within 200m of the camera. At typical 3D viewing angles, 90%+ of 280K agents are too far to see detail. Use the 2D triangle/rectangle/dot shapes for distant agents (existing code, zero cost to keep).
+2. **Use impostor/billboard rendering for mid-distance agents.** A textured quad facing the camera (4 vertices) with a pre-rendered vehicle sprite is cheaper than a 3D mesh and looks acceptable at 50-200m distance.
+3. **Implement GPU-driven LOD selection.** A compute shader determines which agents get 3D models vs. billboards vs. dots based on screen-space size. Output to an indirect draw buffer. This avoids CPU-side LOD decisions for 280K agents.
+4. **Budget: max 50K 3D model triangles per frame.** This means at most 100-500 detailed 3D vehicles visible at once. The rest are billboards or dots.
+
+**Phase to address:** Phase 3 (3D Agent Models). Start with LOD from day one. Never attempt to render 280K 3D models simultaneously.
+
+---
+
+### Pitfall 11: RTSP Stream Reliability on macOS Without Container/Service Infrastructure
+
+**What goes wrong:**
+RTSP camera connections are inherently fragile: cameras go offline, networks partition, streams switch codecs mid-session, TCP connections time out. On Linux, camera management is typically handled by a dedicated service (e.g., a GStreamer pipeline managed by systemd). On macOS (the development/deployment target), there is no equivalent service infrastructure. The VELOS binary must handle all stream lifecycle management directly.
+
+Common failures: camera firmware reboots mid-stream (30-60s outage), WiFi cameras switch from 5GHz to 2.4GHz (causing IP change and stream URL invalidation), multiple RTSP streams exhaust macOS's file descriptor limit (default: 256 per process), and H.265 streams from newer cameras are decoded by VideoToolbox only on M1+ (older Intel Macs fail silently).
+
+**Prevention:**
+1. **Raise file descriptor limit.** Add `ulimit -n 4096` to launch scripts, or call `setrlimit` programmatically at startup. Each RTSP stream uses 2-4 file descriptors (TCP socket + RTP/RTCP).
+2. **Implement per-stream health monitoring.** Track: last frame received timestamp, decode error count, reconnection count. Expose via the existing Prometheus metrics. Auto-disable streams that fail >3 consecutive reconnection attempts.
+3. **Use the `retina` crate for RTSP.** It is purpose-built for IP camera integration in Rust, handles RTP depacketization, and supports both TCP and UDP interleaved transport. Prefer TCP transport for reliability over UDP (accept slightly higher latency).
+4. **Test with stream interruption.** Simulate camera failures by killing the RTSP server mid-stream. Verify the simulation continues without impact. This must be an automated test, not a manual check.
+
+**Phase to address:** Phase 2 (Camera Integration). Build the stream supervisor with health monitoring before connecting to real cameras.
+
+---
+
+### Pitfall 12: Mixing rayon, tokio, and Dedicated Decode Threads Causes Deadlocks
+
+**What goes wrong:**
+VELOS already uses rayon (CPU-bound simulation work) and tokio (async I/O for gRPC/WebSocket). Adding camera decode introduces a third threading model: dedicated `std::thread` workers for ffmpeg decode (which is synchronous and cannot run on tokio). Additionally, `ort` (ONNX Runtime) inference may internally spawn threads. The resulting thread pool interactions create deadlock risk:
+
+- rayon worker calls `tokio::runtime::block_on()` -> deadlocks tokio runtime
+- tokio task calls `ffmpeg_next::decode()` -> blocks async runtime, starving other tasks
+- Dedicated decode thread calls `wgpu::Queue::write_buffer()` -> may block on GPU fence, holding a lock that the sim thread needs
+- `ort` inference thread calls a callback that tries to acquire a mutex held by the sim thread
+
+**Prevention:**
+1. **Enforce strict threading boundaries.** Document and enforce in code review:
+   - rayon: simulation physics, sorting, pathfinding (CPU-bound, no I/O)
+   - tokio: RTSP network I/O, gRPC, WebSocket, file I/O (async, never CPU-bound)
+   - std::thread: ffmpeg video decode, `ort` inference (synchronous blocking operations)
+   - wgpu queue submission: main thread only (or a single designated render thread)
+2. **Bridge with channels, not shared mutexes.** Use `crossbeam::channel` between decode threads and the sim thread. Use `tokio::sync::mpsc` between tokio tasks and std::threads. Never share a `Mutex` across rayon/tokio/std::thread boundaries.
+3. **Do not call `wgpu::Queue::write_buffer()` from decode threads.** Decoded frames go into a channel; the main thread uploads to GPU as part of the frame pipeline. Only one thread should ever touch `wgpu::Queue`.
+4. **The existing `sim.rs` already documents the rayon/tokio split.** Extend this pattern to the new threading model. Add a `camera_threads.rs` module that owns the decode thread pool.
+
+**Phase to address:** Phase 1 (Architecture). Define the threading model before writing any camera or 3D code. Document in the architecture spec which operations happen on which thread type.
+
+---
+
+## Minor Pitfalls
+
+### Pitfall 13: YOLOv8 Detects Vehicles in Images But Not HCMC Motorbikes
+
+**What goes wrong:**
+Standard YOLO models (COCO-trained) have a "motorcycle" class but are trained primarily on Western-style motorcycles (large cruisers, sport bikes). HCMC motorbikes are predominantly Honda Wave/Dream/Vision scooters that look visually different: smaller, riders wearing conical hats or full-face helmets, 2-3 riders per bike, cargo strapped to the back. Detection accuracy for HCMC motorbikes will be lower than the model's published mAP.
+
+**Prevention:**
+1. Fine-tune YOLOv8n on HCMC traffic footage. Collect 500-1000 annotated frames from target camera locations. Use Ultralytics training with the COCO-pretrained base. Fine-tuning takes 2-4 hours on M1 GPU.
+2. For initial integration, accept lower accuracy. Vehicle counting (not classification) is the primary use case for demand calibration. Even 70% recall produces useful aggregate counts when averaged over 60-second windows.
+3. Validate detection accuracy per vehicle type. Report precision/recall separately for motorbikes, cars, buses, pedestrians. If motorbike recall <60%, the demand model will systematically undercount the dominant vehicle type.
+
+**Phase to address:** Phase 3 (Calibration). After the detection pipeline is working, fine-tune the model with HCMC-specific data.
+
+---
+
+### Pitfall 14: 3D Terrain Elevation Data Unavailable for HCMC
+
+**What goes wrong:**
+3D rendering assumes terrain elevation data (DEM - Digital Elevation Model) to create a ground surface for buildings to sit on. HCMC is extremely flat (average elevation 2m above sea level), so developers assume "just use Z=0 everywhere." But the Saigon River and canal network create elevation changes of 5-10m that matter for visual quality. Free DEM data (SRTM, ASTER GDEM) has 30m resolution -- too coarse for city streets. High-resolution LiDAR DEM data for HCMC is not publicly available.
+
+**Prevention:**
+1. **Start with flat terrain (Z=0 everywhere).** This is visually acceptable for HCMC because the city is genuinely flat. Do not block 3D rendering on terrain data availability.
+2. **Add canal/river water surfaces as flat polygons at Z=-2m.** This provides sufficient visual differentiation without real DEM data.
+3. **If elevation matters later, use OpenStreetMap contour data** (available from OpenTopography) or FABDEM (forest and building removed DEM, 30m resolution). For HCMC's flat terrain, even 30m resolution DEM is adequate for visualization.
+
+**Phase to address:** Phase 3 (Polish). Flat terrain first, elevation later if needed.
+
+---
+
+### Pitfall 15: egui Integration Conflicts with 3D Render Pipeline
+
+**What goes wrong:**
+The current app uses `egui-wgpu` for UI rendering, which manages its own render pass and texture resources. Adding a 3D render pipeline with depth buffers, multiple render passes, and custom texture formats can conflict with `egui-wgpu`'s expectations. Specifically, `egui-wgpu::Renderer` expects to render to a surface texture without depth attachment. If the 3D pipeline changes the surface texture format or adds a depth attachment that persists across passes, egui rendering may fail with format mismatch errors.
+
+**Prevention:**
+1. **Render egui as the final pass, always without depth.** Clear the depth attachment before the egui pass, or use a separate render pass descriptor without depth.
+2. **Do not change the surface texture format.** The 3D pipeline should use the same surface format (from `surface.get_capabilities()`) as the 2D pipeline. Use a separate depth texture, not a combined depth-stencil surface format.
+3. **Consider migrating from egui to a 3D-native UI library** if the UI needs to exist in 3D space (e.g., labels floating above intersections). But for dashboard controls, egui is fine -- just keep it as a 2D overlay pass.
+
+**Phase to address:** Phase 2 (3D Rendering). Test egui rendering after adding 3D passes to verify no format conflicts.
+
+---
+
+## Phase-Specific Warnings
+
+| Phase Topic | Likely Pitfall | Mitigation |
+|-------------|---------------|------------|
+| ML Spike (Phase 1) | YOLO runs on GPU instead of ANE, stealing compute from sim | Force CoreML EP in `ort`, verify ANE usage via Instruments |
+| Coordinate System (Phase 1) | No canonical CRS defined, each subsystem uses different coords | Create `coords.rs` with UTM 48N as canonical, test with known lat/lon points |
+| Camera Decode (Phase 2) | Synchronous ffmpeg decode blocks sim loop | Dedicated std::thread workers with bounded crossbeam channels |
+| 3D Buildings (Phase 2) | Per-building buffers, 100K draw calls | Batched geometry atlas, LOD, frustum culling from day one |
+| Depth Buffer (Phase 2) | Existing 2D pipeline breaks when depth is added | New `Renderer3D` struct, keep `Renderer` as fallback |
+| Detection-Sim Sync (Phase 2) | Detection results applied to wrong simulation timestep | Timestamp correlation, ArcSwap publication, aggregate windowing |
+| Thread Model (Phase 2) | rayon/tokio/std::thread deadlocks from cross-boundary calls | Strict threading boundaries, channel-only bridging |
+| Agent 3D Models (Phase 3) | 280K 3D models = 140M triangles = GPU death | LOD: 3D models <200m, billboards 200-500m, dots >500m |
+| HCMC Detection Accuracy (Phase 3) | COCO-trained YOLO misses HCMC scooters | Fine-tune on 500+ HCMC annotated frames |
+| Stream Reliability (Phase 2) | Camera disconnect crashes simulation | Per-stream supervisor, bounded channels, graceful degradation |
 
 ## Recovery Strategies
 
 | Pitfall | Recovery Cost | Recovery Steps |
 |---------|---------------|----------------|
-| GPU compute not wired into sim loop | MEDIUM | Remove CPU physics path. Wire GPU dispatch into main loop. Fix failing tests one by one. ~1-2 weeks depending on edge case count |
-| Multi-GPU wgpu adapter failure | LOW | Fall back to single-GPU. Reduce target to 200K agents. Configuration change + performance tuning. ~2 days |
-| Wave-front occupancy too low | MEDIUM | Implement EVEN/ODD + 3-pass correction (fallback from architecture). ~1 week to implement and validate |
-| deck.gl attribute bottleneck | MEDIUM | Implement server-side binary attribute packing. Requires changes to both server (Rust binary serialization) and client (deck.gl data format). ~3-5 days |
-| Fixed-point performance penalty | LOW | Fall back to float32 + @invariant. Accept statistical equivalence. ~1 day to revert shaders |
-| Meso-micro velocity discontinuity | HIGH | Requires iterative tuning of buffer zone parameters, warm-up distances, and insertion logic. No quick fix -- this is a research problem. ~2-4 weeks of experimentation |
-| Docker GPU access failure | LOW | Fix container configuration (env vars, Vulkan libs, ICD files). Well-documented problem. ~1 day |
-| Redis pub/sub memory exhaustion | MEDIUM | Add per-client message TTL, implement frame dropping for slow clients, add monitoring alerts. ~2-3 days |
-| CCH incorrect paths after customization | HIGH | Likely wrong node ordering. Must rebuild ordering with nested dissection. All shortcuts recomputed. ~3-5 days (same as v1.0 pitfall) |
+| Single queue serialization | MEDIUM | Refactor to separate compute/render submission windows. Move ML to ANE via CoreML. ~1 week |
+| YOLO on GPU not ANE | LOW | Reconfigure `ort` session to use CoreML EP. Model re-export if needed. ~1-2 days |
+| Building mesh OOM | MEDIUM | Rewrite mesh loading to batched atlas. Implement LOD. ~1 week |
+| Coordinate system confusion | HIGH | Retrofit coordinate transforms across entire codebase. Every subsystem affected. ~2-3 weeks if not designed upfront |
+| Video decode blocking sim | MEDIUM | Extract decode to dedicated threads. Add bounded channels. ~3-5 days |
+| Depth buffer breaks 2D | LOW | Create separate `Renderer3D`, keep original `Renderer`. ~2-3 days |
+| Async timing mismatch | MEDIUM | Add timestamp correlation, switch to aggregate windowed calibration. ~1 week |
+| 280K 3D models | MEDIUM | Implement LOD system, GPU-driven selection. ~1-2 weeks |
+| Threading deadlocks | HIGH | Debug deadlocks is notoriously difficult. Prevention via architecture is 10x cheaper than debugging. ~1-3 weeks if deadlocks manifest in production |
 
-## Pitfall-to-Phase Mapping
+## "Looks Done But Isn't" Checklist
 
-| Pitfall | Prevention Phase | Verification |
-|---------|------------------|--------------|
-| GPU compute not in sim loop | Phase 1 (Foundation) | All v1.0 tests pass with GPU physics as sole driver. No CPU physics code path exists |
-| Multi-GPU adapter failure | Phase 1 (Spike S2) | Trivial compute shader runs on 2 adapters from single process. 64KB buffer transfer < 0.1ms |
-| Wave-front GPU occupancy | Phase 1 (Spike S1) | Wave-front achieves > 40% of naive parallel throughput on target hardware |
-| deck.gl 280K point bottleneck | Phase 2 (Scale) | Dashboard maintains 30 FPS with 280K agents updating at 10 Hz. Input latency < 50ms |
-| Fixed-point performance | Phase 3 (optional) | Full IDM formula in fixed-point within 50% of float32 throughput. If not, use float32 fallback |
-| Meso-micro velocity discontinuity | Phase 3 (Calibration) | Travel time at meso-micro boundaries within 10% of full-micro reference. No artificial congestion visible |
-| Docker GPU access | Phase 2 (early validation) | Minimal wgpu-in-Docker test passes: enumerate adapters, run trivial compute, read results |
-| Redis pub/sub scaling | Phase 2 (WebSocket relay) | 100 concurrent viewers sustained for 10 minutes. Redis memory stable. Zero dropped connections |
-| CCH ordering correctness | Phase 1-2 (Routing) | 1000 random queries match Dijkstra with 3 different weight configurations. Shortcut count < 3x edge count |
-| Parquet checkpoint blocking | Phase 2 (Checkpoint) | Checkpoint write for 280K agents completes with <5ms sim loop stall (async offload) |
-| WebSocket binary encoding | Phase 2 (API) | Client on ARM64 and x86 both render agents at correct positions from same binary stream |
-| gRPC backpressure | Phase 2 (API) | Slow client test: server stable after 60 seconds with client consuming at 1/10th production rate |
+- [ ] **ML inference on ANE:** Session runs, produces results, but actually executing on GPU. Check with Instruments > Neural Engine trace. If ANE utilization is 0%, inference is on GPU.
+- [ ] **VideoToolbox decode "working":** ffmpeg reports videotoolbox active, but is falling back to software decode for some frames (B-frames, certain profiles). Check decode time consistency -- software fallback frames take 5-10x longer.
+- [ ] **3D buildings "rendering":** Buildings visible but frustum culling not implemented. Drawing 100K invisible buildings behind the camera. Check draw call count in Metal profiler vs visible building count.
+- [ ] **Camera calibration "done":** Intrinsics calibrated with checkerboard, but extrinsics (camera-to-world transform) estimated by eye. Detected positions will be systematically offset from simulation positions.
+- [ ] **Coordinate transforms "tested":** Tested with one point, but longitude/latitude order varies between libraries (GeoJSON: [lon, lat], most other formats: [lat, lon]). Test with points in all four quadrants of the UTM zone.
+- [ ] **Depth buffer "working":** Depth test passes, but depth precision is insufficient for the scene scale. At 50km scene extent with near=0.1, far=100000, 24-bit depth buffer has <1m precision at far plane. Use logarithmic depth or tighter near/far planes.
+- [ ] **RTSP reconnection "handled":** Reconnects after clean disconnect, but not after network timeout (60s TCP keepalive). Test by unplugging ethernet/disabling WiFi mid-stream, not by stopping the RTSP server cleanly.
+- [ ] **LOD "implemented":** LOD transitions visible as popping (sudden geometry change). Need smooth transition: cross-fade or dithered LOD blending over 2-3 frames.
 
 ## Sources
 
-- [wgpu multi-adapter limitations -- WebGPU does not expose multi-GPU](https://wgpu.rs/)
-- [wgpu in Docker -- request_adapter returns None with discrete GPUs (gfx-rs/wgpu#2123)](https://github.com/gfx-rs/wgpu/issues/2123)
-- [wgpu multithreading performance issues (gfx-rs/wgpu#5525)](https://github.com/gfx-rs/wgpu/discussions/5525)
-- [deck.gl performance best practices -- attribute generation bottleneck](https://deck.gl/docs/developer-guide/performance)
-- [deck.gl real-time data update patterns (Discussion #6869)](https://github.com/visgl/deck.gl/discussions/6869)
-- [deck.gl real-time data best practices (Discussion #6274)](https://github.com/visgl/deck.gl/discussions/6274)
-- [LPSim: Large Scale Multi-GPU Traffic Simulation (2024)](https://arxiv.org/html/2406.08496v1)
-- [GPU-accelerated Large-scale Simulator for Transportation (2024)](https://arxiv.org/html/2406.10661v1)
-- [CCH paper -- node ordering must be metric-independent (Dibbelt et al., 2014)](https://arxiv.org/pdf/1402.0402)
-- [RoutingKit CCH documentation -- best CH orders don't yield good CCHs](https://github.com/RoutingKit/RoutingKit/blob/master/doc/CustomizableContractionHierarchy.md)
-- [Hybrid meso-micro traffic simulation transition artifacts (Burghout, KTH)](https://www.diva-portal.org/smash/get/diva2:14700/FULLTEXT01.pdf)
-- [Meso-micro consistency requirements (ScienceDirect)](https://www.sciencedirect.com/science/article/pii/S187704281101411X)
-- [Redis pub/sub WebSocket scaling pitfalls (Ably)](https://ably.com/blog/scaling-pub-sub-with-websockets-and-redis)
-- [WebSocket scaling challenges (DEV Community)](https://dev.to/ably/challenges-of-scaling-websockets-3493)
-- [NVIDIA Container Toolkit -- GPU driver capabilities](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/docker-specialized.html)
-- [wgpu buffer mapping and polling patterns](https://tillcode.com/rust-wgpu-compute-minimal-example-buffer-readback-and-performance-tips/)
-- [Parquet Rust crate -- arrow-rs integration](https://arrow.apache.org/rust/parquet/index.html)
-- [WebGPU double precision discussion -- no f64/i64 runtime support (gpuweb#2805)](https://github.com/gpuweb/gpuweb/issues/2805)
+- [wgpu v28.0.0 Release -- Mesh Shaders support on Metal](https://github.com/gfx-rs/wgpu/releases/tag/v28.0.0)
+- [Apple Metal Command Queue documentation -- queue concurrency model](https://developer.apple.com/documentation/metal/mtlcommandqueue)
+- [Metal Compute on MacBook Pro -- GPU scheduling](https://developer.apple.com/videos/play/tech-talks/10580/)
+- [Apple Silicon GPU: 2x concurrency across entire GPU](https://github.com/philipturner/metal-benchmarks)
+- [ONNX Runtime CoreML Execution Provider -- ANE support](https://onnxruntime.ai/docs/execution-providers/CoreML-ExecutionProvider.html)
+- [ort crate -- ONNX Runtime Rust bindings with CoreML](https://crates.io/crates/ort/1.13.2)
+- [Rust ORT ONNX Real-Time YOLO on Webcam (2025)](https://medium.com/@alfred.weirich/rust-ort-onnx-real-time-yolo-on-a-live-webcam-part-2-d74efc01bae0)
+- [candle-coreml -- Rust CoreML bridge](https://crates.io/crates/candle-coreml)
+- [YOLOv8 macOS Metal benchmarks -- M4 Pro: 92.6 FPS YOLOv8n](https://blog.roboflow.com/putting-the-new-m4-macs-to-the-test/)
+- [YOLOv8 Metal vs CUDA benchmark paper](https://www.researchgate.net/publication/394305460_Benchmarking_YOLOv8-Tiny_for_Real-Time_Object_Detection_on_macOS_A_Comparison_of_Metal_and_CUDA_Performance)
+- [YOLOv8 MPS backend: 16-21ms per frame with MPS, 68-71ms without](https://n-ahamed36.medium.com/running-yolov8-on-apple-silicon-with-mps-backend-a-simplified-guide-84b1d382f79c)
+- [Apple Silicon unified memory: Metal caps GPU memory at ~75% of unified RAM](https://scalastic.io/en/apple-silicon-vs-nvidia-cuda-ai-2025/)
+- [Metal 4 -- embed ML inference in render pipeline](https://medium.com/@shivashanker7337/apples-metal-4-the-graphics-api-revolution-nobody-saw-coming-a2e272be4d57)
+- [VideoToolbox hardware decode -- 4x faster than software](https://www.martin-riedl.de/2020/12/06/using-hardware-acceleration-on-macos-with-ffmpeg/)
+- [ez-ffmpeg Rust crate -- VideoToolbox hwaccel support](https://docs.rs/ez-ffmpeg/latest/ez_ffmpeg/core/hwaccel/index.html)
+- [retina crate -- Rust RTSP client for IP cameras](https://lib.rs/crates/retina)
+- [wgpu NDC coordinates: Y-up, depth [0,1]](https://wgpu-py.readthedocs.io/en/stable/guide.html)
+- [Learn Wgpu -- OPENGL_TO_WGPU_MATRIX correction](https://sotrh.github.io/learn-wgpu/beginner/tutorial6-uniforms/)
+- [Mesh shaders for LOD and culling in Metal](https://metalbyexample.com/mesh-shaders/)
 
 ---
-*Pitfalls research for: VELOS v1.1 Digital Twin Platform -- scaling from POC to production*
-*Researched: 2026-03-07*
+*Pitfalls research for: VELOS -- Adding Camera CV Detection + 3D wgpu Rendering to Existing Traffic Microsimulation*
+*Researched: 2026-03-09*

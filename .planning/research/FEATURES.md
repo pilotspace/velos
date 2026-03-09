@@ -1,276 +1,251 @@
 # Feature Research
 
-**Domain:** GPU-accelerated traffic microsimulation digital twin platform (v1.1 scale-up)
-**Researched:** 2026-03-07
-**Confidence:** HIGH (architecture docs are thorough; domain is well-established with SUMO/VISSIM/Aimsun as references; v1.0 POC validated core simulation pipeline)
+**Domain:** Camera CV integration + 3D wgpu native rendering for GPU-accelerated traffic microsimulation digital twin
+**Researched:** 2026-03-09
+**Confidence:** MEDIUM (camera CV pipeline is well-established domain; wgpu 3D rendering requires custom implementation with limited traffic-sim-specific precedent; demand calibration from camera counts uses standard methods but integration is novel)
 
 ## Context
 
-v1.0 shipped a desktop POC: 1.5K agents, District 1, egui dashboard, A* routing, CPU-side physics (GPU pipeline tested but not wired). v1.1 is the full v2 architecture: 280K agents across 5 HCMC districts with multi-GPU compute, web visualization, API server, calibration, and deployment infrastructure. This research focuses exclusively on the NEW features needed for v1.1.
+v1.1 shipped a complete SUMO-replacement simulation engine: 280K agents, 7 vehicle types, CCH routing, BPR+ETS prediction, 2D GPU-instanced rendering (triangles/rectangles/dots), egui dashboard, SUMO import. All running natively on macOS Metal via wgpu.
+
+v1.2 adds two major capabilities:
+1. **Camera-based detection** -- ingest traffic camera feeds, detect/classify vehicles and pedestrians, use counts to calibrate simulation demand in real-time
+2. **3D native rendering** -- replace 2D flat shapes with 3D city scene (buildings, terrain, vehicle meshes) rendered directly in wgpu, still on the same Metal surface
+
+Both features complete the "digital twin" loop: real-world observation feeds simulation, and simulation renders a 3D replica of the real city.
 
 ## Feature Landscape
 
 ### Table Stakes (Users Expect These)
 
-Features that any credible traffic microsimulation digital twin platform must have. These transform the v1.0 desktop demo into a usable platform. Missing any of these means v1.1 is not a viable product.
+Features that any credible traffic digital twin with camera integration and 3D visualization must have. Missing these means the milestone is incomplete.
 
 | Feature | Why Expected | Complexity | Notes |
 |---------|--------------|------------|-------|
-| **gRPC/REST API for simulation control** | Every modern sim platform exposes programmatic control (SUMO TraCI, VISSIM COM, Aimsun Python SDK). Without an API, the sim is a demo, not a platform. External tools, notebooks, and dashboards all need API access. | MEDIUM | tonic (gRPC) + axum (REST/WebSocket). Protobuf contracts designed in `05-visualization-api.md`. ~20 RPC methods. Depends on: v1.0 simulation engine refactored for server mode. |
-| **WebSocket real-time streaming** | Viewers expect live agent positions at 10Hz. SUMO provides TraCI streaming; VISSIM has COM. Web-based streaming via WebSocket is the modern equivalent for browser clients. | MEDIUM | FlatBuffers binary protocol (8 bytes/agent). Spatial tiling (500m cells) for viewport-based subscription. 280K agents = ~32KB/frame for 4 tiles. Depends on: API server, Redis pub/sub. |
-| **Parquet checkpoint/restart** | 24-hour simulations crash. Every production sim has save/load (SUMO state save, VISSIM snapshot). Without checkpoint, no batch runs, no crash recovery. | MEDIUM | ECS snapshot to Parquet via arrow-rs. 280K agents = ~15MB compressed (Zstd L3). ~200ms save, ~500ms restore. Rolling window of 10 checkpoints. Depends on: ECS state serialization, Parquet writer. |
-| **GEH/RMSE calibration** | Industry standard since FHWA Traffic Analysis Toolbox Vol III. GEH < 5 for 85%+ links is the accepted threshold (confirmed by Florida DOT). Without calibration, model output is an animation, not engineering data. | MEDIUM | GEH statistic implementation + Bayesian optimization via argmin crate. Tunes: OD scaling factors, IDM params per road class, signal timing offsets. Depends on: traffic count data (HCMC DOT, ~50 locations), data export, full agent models running. |
-| **Data export (FCD, Parquet, CSV, GeoJSON)** | Researchers analyze results in Python/R/QGIS. Every sim exports data. SUMO exports FCD XML, VISSIM exports CSV. Parquet for big data analytics workflows. | LOW | arrow-rs for Parquet, serde for CSV/GeoJSON, quick-xml for SUMO FCD compatibility. Straightforward once simulation state is accessible. Depends on: simulation producing per-step output. |
-| **5-district HCMC road network** | The POC scope. Districts 1, 3, 5, 10, Binh Thanh = ~25K edges, ~15K junctions, ~50km road network. Must be fully connected and clean. | MEDIUM | Extends v1.0 District 1 OSM import. Adds: network cleaning (merge short edges <5m, remove disconnected components), lane count inference by road class, HCMC-specific rules (one-way streets, U-turn points, motorbike-only lanes). Depends on: v1.0 OSM import pipeline. |
-| **Time-of-day demand profiles (extended)** | v1.0 has basic ToD. v1.1 needs HCMC-specific weekday/weekend/holiday profiles across 5 districts with proper AM/PM peak shapes. 280K peak agents. | LOW | Extends v1.0 OD/ToD system. Add DemandEvent support for spikes. Gravity model fallback if GPS probe data unavailable. Depends on: v1.0 demand generation. |
-| **Bus dwell time modeling** | Buses are 4% of HCMC agents (10K) but disproportionately affect traffic flow by blocking lanes during dwell (HCMC has few dedicated bus bays). Every multi-modal sim handles bus stops. | LOW | Empirical dwell time = 5s fixed + 0.5s/boarding + 0.67s/alighting, capped at 60s. HCMC GTFS available for 130 routes. Depends on: GTFS import, agent type system from v1.0. |
-| **Bicycle agents** | 7% of POC agents (20K). Bicycles share road space. Missing bicycle agents creates unrealistic density distribution. SUMO/VISSIM both model bicycles. | LOW | Sublane model (rightmost, no filtering), IDM with v0=15km/h. Similar to motorbike but simpler behavior. Depends on: v1.0 agent type system, sublane infrastructure. |
-| **Docker Compose deployment** | Reproducibility is non-negotiable for scientific software. "Works on my machine" is unacceptable. Docker Compose is the minimal viable deployment strategy. | LOW | 7 services: sim (GPU), api, viz, redis, tiles (nginx), prometheus, grafana. docker-compose.yml already specified in `06-infrastructure.md`. Depends on: all service binaries buildable. |
-| **Prometheus/Grafana monitoring** | At 280K agents on multi-GPU, you need operational visibility: frame time, GPU utilization, VRAM, gridlock events, boundary transfers. Blind operation at scale is reckless. | LOW | Standard Prometheus exposition + pre-built Grafana dashboards. Key metrics: frame_time_ms (histogram), agent_count (gauge), gpu_utilization, gridlock_events, reroute_count. Depends on: instrumented simulation loop. |
-| **PMTiles static map tiles** | Web visualization needs base maps. PMTiles + Nginx = zero-ops tile serving. Eliminates Martin/PostGIS/Nominatim stack (6+ services down to 0 additional). | LOW | One-time tile generation: OSM PBF -> tilemaker -> mbtiles -> pmtiles. Nginx serves static files. MapLibre GL JS consumes via pmtiles:// protocol. Depends on: nothing (independent pipeline). |
+| **Vehicle detection (car, motorbike, bus, truck)** | Core purpose of camera integration. Must detect the same vehicle classes the simulation models. HCMC is 80% motorbikes -- must detect motorbikes reliably, not just cars. | MEDIUM | YOLOv8/v11 with ONNX Runtime via `ort` crate. Export Ultralytics model to ONNX, run inference in Rust. Pre-trained COCO has car/truck/bus; needs fine-tuning or custom dataset for motorbike vs bicycle distinction in HCMC context. Depends on: camera feed ingestion. |
+| **Pedestrian detection** | Simulation models 20K pedestrians. Camera pipeline must count pedestrians at crosswalks/intersections for demand validation. | LOW | Same YOLO model detects "person" class natively. No additional model needed. Depends on: vehicle detection pipeline (shared model). |
+| **Per-class vehicle counting** | Without classified counts, camera data cannot calibrate per-type demand (motorbike OD vs car OD). Every traffic monitoring system provides counts by vehicle type. | LOW | Track detections across frames (simple centroid tracker or ByteTrack). Count crossings at a virtual line per camera. Aggregate by class. Depends on: detection pipeline. |
+| **Camera-to-network spatial mapping** | Detection counts must map to specific simulation edges/intersections. Without this, counts are just numbers with no spatial meaning. | MEDIUM | Manual configuration: each camera gets associated edge_id(s) or junction_id. Camera FOV polygon mapped to simulation network via lat/lon registration. Config-driven, not automatic. Depends on: network graph with geo-coordinates. |
+| **Demand adjustment from counts** | The entire point of camera integration -- observed counts correct simulated demand. Standard approach in traffic engineering (FHWA calibration guidelines). | MEDIUM | Compare observed vs simulated counts per edge. Compute scaling factors per OD pair using gradient-free optimization (extend existing argmin/Bayesian calibration). Update spawn rates. Depends on: counting pipeline, existing velos-calibrate crate. |
+| **3D depth buffer + perspective camera** | Current renderer is 2D orthographic (no depth). 3D requires perspective projection and depth testing. This is the foundational upgrade for all 3D content. | MEDIUM | Add depth texture (Depth32Float), perspective camera with position/target/up, depth_stencil_attachment on render pass. Extends existing `Renderer` and `Camera2D` to `Camera3D`. Depends on: existing wgpu renderer. |
+| **3D building extrusions from OSM** | Buildings are the dominant visual element of a city scene. Users expect to see the city, not just roads and dots. OSM building footprints with height data cover HCMC adequately. | HIGH | Parse OSM building polygons, triangulate footprints (earcut algorithm), extrude to height (from `building:levels` tag, default 3m/floor). Generate vertex/index buffers. Instanced or batched draw. ~50K buildings in POC area. Depends on: 3D pipeline, OSM data. |
+| **3D road surface rendering** | Roads must look like roads, not lines. Render road polygons with lane markings at close zoom. | MEDIUM | Extrude road edges to width (from lane count * lane_width). Generate quads with UV for lane marking texture. Road surface slightly above terrain. Depends on: 3D pipeline, network graph geometry. |
+| **3D agent rendering with LOD** | Users expect to see vehicles as recognizable shapes when zoomed in. At city scale, individual meshes are wasteful. LOD strategy is standard practice. | HIGH | Three LOD tiers: (1) Close (<200m): low-poly glTF meshes per vehicle type (~200-500 triangles), (2) Mid (200-1000m): textured billboards/quads facing camera, (3) Far (>1000m): colored dots (current 2D approach). GPU instanced per tier. Depends on: 3D pipeline, glTF loader, camera distance calculation. |
+| **Day/night lighting** | Time-of-day simulation runs 24h cycles. Users expect visual correspondence -- dark at night, bright at day. Without this, the 3D scene looks static and fake. | MEDIUM | Directional sun light with time-based azimuth/elevation. Ambient + diffuse lighting in fragment shader. Night: dark ambient + point lights at intersections/streetlights. No shadows for v1.2 (HIGH complexity, LOW value). Depends on: 3D pipeline with normals. |
+| **Camera FOV overlay on map** | When viewing camera data, users need to see where each camera points. Standard in traffic management systems. | LOW | Render camera position as icon + FOV cone/polygon as semi-transparent overlay on map. egui panel lists cameras with status. Depends on: camera config with position/direction/FOV angle. |
 
 ### Differentiators (Competitive Advantage)
 
-Features that set VELOS v1.1 apart from all existing traffic simulation platforms. These are where the project competes.
+Features that set VELOS apart from existing traffic digital twins. These are where the project competes.
 
 | Feature | Value Proposition | Complexity | Notes |
 |---------|-------------------|------------|-------|
-| **Multi-GPU wave-front dispatch** | No open-source traffic sim does multi-GPU microscopic simulation. LPSim (UC Berkeley, 2024) is the only published multi-GPU traffic sim and it's mesoscopic only. VELOS doing per-lane Gauss-Seidel wave-front on multiple GPUs with 280K micro agents is genuinely novel. | HIGH | METIS graph partitioning (k-way, k=num_gpus), boundary agent protocol (outbox/inbox staging buffers, ~64KB/step transfer), per-lane wave-front dispatch (50K workgroups). Eliminates v1.0 EVEN/ODD dispatch which has no convergence proof. Depends on: v1.0 GPU pipeline, network graph partitioning. |
-| **Fixed-point arithmetic for cross-GPU determinism** | SUMO is deterministic (CPU, single-thread). GPU sims are typically non-deterministic due to IEEE 754 variance across GPU vendors. Bitwise-identical results across AMD/NVIDIA/Intel is a research-grade feature no competitor offers. | HIGH | Q16.16 position (0.015mm resolution), Q12.20 speed, Q8.8 lateral. Manual 64-bit emulation in WGSL (no native i64). ~20% GPU perf cost. Fallback: float32 with @invariant if perf unacceptable. Depends on: wave-front dispatch (sequential within-lane makes FP feasible). |
-| **CCH dynamic pathfinding (3ms weight update)** | Standard CH requires 30s full rebuild on weight change. CCH separates topology from weights: 30s initial ordering (once), then 3ms customization for 25K edges whenever prediction updates. 0.02ms per query (25x faster than A*). No open-source sim has CCH -- SUMO uses Dijkstra/A*/CH, all require full rebuild for dynamic weights. | HIGH | Custom CCH implementation in Rust. No production-ready CCH crate exists. Must implement: node ordering, shortcut topology construction, bottom-up weight customization, bidirectional Dijkstra on CCH. 500 queries/step in 0.7ms with rayon (16 cores). Depends on: 5-district network graph, prediction overlay for weight updates. |
-| **In-process prediction ensemble** | Competitors either have no prediction (SUMO) or require external Python/ML sidecar (latency, ops complexity). VELOS runs BPR + ETS + historical prediction in-process with ArcSwap for zero-copy, lock-free overlay swap. Predictions are never stale. | MEDIUM | Three models: BPR physics extrapolation (w=0.40), exponential smoothing correction (w=0.35), historical pattern match (w=0.25). Runs every 60 sim-seconds on tokio::spawn. 25K edges x 3 models = ~0.1ms. Depends on: simulation state snapshots, historical calibration data. |
-| **Motorbike sublane at GPU scale (200K)** | v1.0 proved the continuous lateral model at 1.5K agents. v1.1 scales to 200K motorbikes on GPU. No other sim handles 200K motorbikes with continuous lateral positioning and swarm behavior. This remains the core differentiator. | MEDIUM | Port v1.0 CPU sublane model to GPU compute shaders with fixed-point lateral position (FixedQ8_8). Gap-based filtering, swarm clustering at signals. Depends on: v1.0 sublane model, GPU wave-front dispatch. |
-| **Pedestrian adaptive GPU workgroups** | Standard GPU spatial hash wastes workgroups on empty cells. Prefix-sum compaction dispatches only non-empty cells. 3-8x speedup for non-uniform pedestrian density (crosswalk rush hour vs. empty sidewalks). Novel GPU optimization. | MEDIUM | 4-phase GPU pipeline: count per cell (atomic), prefix-sum scan, scatter into compacted array, social force compute. Variable cell sizes by density zone (2m crosswalk, 5m sidewalk, 10m park). Depends on: v1.0 pedestrian model, GPU compute pipeline. |
-| **deck.gl 2D + CesiumJS 3D web visualization** | All competitors are desktop-first (SUMO-GUI, VISSIM desktop, Aimsun Next). Web-based visualization with deck.gl handles 280K points at 60FPS in any browser. Multi-viewer without client install. CesiumJS for 3D stakeholder demos. | MEDIUM | React + TypeScript dashboard. deck.gl layers: ScatterplotLayer (vehicles), HeatmapLayer (density), PathLayer (bus routes), IconLayer (signal states). CesiumJS optional (OSM building extrusions). Depends on: WebSocket streaming, API server, PMTiles, FlatBuffers protocol. |
-| **Meso-micro hybrid with graduated buffer zones** | Aimsun has meso-micro hybrid but boundary discontinuities cause phantom congestion (known issue in literature). VELOS's 100m buffer zone with velocity-matching insertion and linear IDM parameter interpolation (T: 2x -> 1x normal, s0: 1.5x -> 1x normal) eliminates boundary artifacts. Active research area with no solved standard approach. | HIGH | Queue-based meso model (O(1)/edge), 100m velocity interpolation buffer, safe insertion protocol (hold vehicle in meso queue if micro is full), IDM parameter relaxation. Depends on: v1.0 micro models working at scale, network zone classification. |
-| **Scenario DSL + batch runner + MOE comparison** | SUMO has NETEDIT but no declarative scenario DSL. VISSIM requires COM scripting. A TOML/YAML-based scenario definition with automated parallel batch execution and MOE comparison tables is a significant developer experience improvement. | MEDIUM | Scenario DSL defines: network mutations (block edge, change signal), demand variations (multipliers, events), parameter overrides. Batch runner: parallel execution with different seeds. MOE comparison: throughput, mean delay, travel time index, queue length, LOS distribution. Depends on: checkpoint/restart, calibrated baseline, data export. |
-| **HBEFA emissions modeling** | HBEFA 5.1 (Oct 2025) is the European standard for road transport emission factors. SUMO integrates via external tool chain. Having HBEFA natively in Rust means per-agent per-step emissions output (CO2, NOx, PM) with zero pipeline overhead. Valuable for policy evaluation (e.g., motorbike restriction zones). | LOW | Lookup table: (vehicle_type, speed, road_gradient, traffic_situation) -> g/km. HBEFA factors are published data. Includes motorcycle emission factors (critical for HCMC). Depends on: agent speed/type data per step, edge gradient data. |
+| **Real-time demand calibration loop** | Most traffic sims calibrate offline with historical counts. VELOS can close the loop: camera counts update demand every N minutes during a running simulation. This is active research (MIT 2020, Technion 2025) with no open-source implementation at this scale. | HIGH | Pipeline: camera -> detection -> counting -> compare with sim edge flows -> compute OD adjustment factors -> update velos-demand spawner rates -> agents spawn at corrected rates. Must handle: noisy counts, partial camera coverage, count-to-OD underdetermination. Depends on: all camera pipeline table stakes + existing calibration crate. |
+| **Motorbike-specific detection fine-tuning** | Generic YOLO models lump motorcycles together. HCMC needs: motorbike vs electric scooter vs bicycle distinction. No commercial traffic CV product handles SE Asian motorbike-dominant traffic well. | MEDIUM | Fine-tune YOLOv8 on HCMC traffic camera footage with custom classes: motorbike, electric_scooter, bicycle, car, bus, truck, pedestrian. 500-1000 labeled images sufficient for transfer learning. Export to ONNX. Depends on: base detection pipeline, labeled training data. |
+| **Speed estimation from camera** | Beyond counting -- estimate vehicle speeds from camera footage to validate simulation speed distributions per edge. Enables speed-based calibration, not just volume-based. | HIGH | Requires camera calibration (intrinsic + extrinsic), homography to road plane, track vehicle positions across frames, compute distance/time. Literature shows 5-10% accuracy achievable with proper calibration. Depends on: detection + tracking pipeline, camera calibration. |
+| **Native wgpu 3D (no browser/webview)** | Competitors use CesiumJS/deck.gl (browser), Unity/Unreal (game engines), or desktop Qt. VELOS renders 3D directly in the same wgpu context as compute shaders -- zero data transfer overhead, single binary, no webview process. | HIGH | Full custom 3D rendering pipeline in wgpu: perspective camera, depth buffer, mesh rendering, instancing, lighting. More work than using a game engine, but eliminates the GPU context switch penalty and keeps the single-binary advantage. Depends on: existing wgpu infrastructure. |
+| **Seamless 2D/3D view toggle** | Switch between 2D top-down analytics view (current) and 3D perspective view with one click. Same data, same frame, same egui controls. No page reload, no separate application. | MEDIUM | Both Camera2D and Camera3D share the same instance buffer data. Toggle swaps camera projection and enables/disables depth buffer + building/terrain passes. Smooth animated transition possible. Depends on: 3D pipeline coexisting with 2D pipeline. |
+| **Detection confidence heatmap overlay** | Overlay detection confidence on the simulation map -- show where camera coverage is strong vs weak. Helps identify where demand calibration is reliable vs uncertain. | LOW | Aggregate detection confidence scores per edge. Render as color-coded edge overlay (green = high confidence coverage, red = no camera). Depends on: camera-to-network mapping, detection results. |
+| **Terrain from DEM** | HCMC is mostly flat but has elevation variation near rivers and canals. Terrain adds realism and enables flood simulation visualization in future. | MEDIUM | SRTM 30m DEM -> heightmap texture -> GPU vertex displacement on terrain grid mesh. terra crate provides prior art for wgpu terrain. Grid resolution: 30m cells, ~270x270 grid for POC area. Depends on: 3D pipeline, DEM data download. |
 
 ### Anti-Features (Commonly Requested, Often Problematic)
 
 | Feature | Why Requested | Why Problematic | Alternative |
 |---------|---------------|-----------------|-------------|
-| **Wiedemann 99 car-following** | VISSIM users expect it. 10-parameter model claims higher fidelity. | W99 requires PTV-calibrated datasets unavailable for HCMC. Uncalibrated W99 produces worse results than calibrated IDM. Including it creates false expectations. | IDM with 5 physically interpretable parameters. Bayesian optimization tunes within HCMC-specific ranges. |
-| **SUMO TraCI compatibility** | Reuse existing SUMO scripts. Large ecosystem. | TraCI is synchronous, single-threaded, fundamentally incompatible with GPU-parallel execution. API surface is ~200 commands. Maintaining compatibility with a moving target is massive ongoing burden. | Native gRPC API. Provide thin Python client (`velos-py`) mirroring TraCI patterns for migration. |
-| **Multi-node distributed simulation** | "Scale to 2M agents across a cluster." | 280K agents fit on single-node 2-4 GPUs. Multi-node adds: network latency (100x PCIe), distributed state sync, clock sync, ghost zone complexity. All for a target that doesn't need it. | Single-node multi-GPU. PCIe agent transfer at 64KB/step is negligible. Multi-node deferred to v3 for 2M+ agents. |
-| **Real-time sensor data fusion** | Digital twin "should" sync with live traffic. | Requires: data partnerships (HCMC DOT), streaming pipeline (Kafka), data quality filters, clock synchronization. Massive scope creep for marginal POC value. | Offline calibration with historical counts. Replay recorded sensor data. Add live fusion in v3 after model validated. |
-| **ML/DL prediction (PyTorch/TensorFlow)** | Deep learning predicts traffic better. | Python sidecar = Arrow IPC latency, ops complexity, version conflicts. ML models need training data that doesn't exist for HCMC yet. | Rust-native BPR+ETS+historical ensemble. If ML needed later, add as gRPC prediction service (not shared-memory IPC). |
-| **CityGML 3D buildings** | Photorealistic 3D city visualization. | No CityGML dataset exists for HCMC. Creating one is months of work. | OSM building footprint extrusions in CesiumJS. Heights from `building:levels` tag. 80% visual impact at 1% effort. |
-| **Autonomous vehicle models** | "Every new sim should support AVs." | Negligible AV presence in HCMC. Adds agent interaction complexity with zero benefit for HCMC POC. | Defer to v3. Add when HCMC has measurable AV penetration. |
-| **Full passenger flow model** | Multi-commodity passenger OD, overcrowding, transfers. | Massive modeling complexity (demand, fare, capacity, transfer network). Bus dwell time model captures 80% of traffic impact at 5% effort. | Simplified bus dwell time (fixed + per-passenger). Defer full passenger flow to transit optimization phase. |
-| **Plugin/extension system** | "Let users write custom models." | Plugin APIs create backward compatibility obligations. Premature API stabilization prevents necessary architectural changes. | Provide source code. Users fork and modify. Stabilize APIs after v2 architecture settles. |
+| **Real-time video overlay in 3D scene** | "Show live camera feeds as texture planes in the 3D world." | Video decoding + texture upload per frame per camera is expensive. Multiple cameras = multiple decode streams. Synchronizing video time with sim time adds complexity. Marginal value over just showing detection results. | Show detection bounding boxes as overlay on camera panel (2D egui panel). Show aggregated counts on the 3D map. |
+| **Automatic camera calibration** | "The system should auto-detect camera parameters from the video feed." | Reliable automatic extrinsic calibration from arbitrary traffic cameras is unsolved at production quality. Requires vanishing point detection, known road geometry, and still fails with occlusion/weather. Research-grade, not production-grade. | Manual camera registration: user enters lat/lon/heading/FOV per camera. Config file. One-time setup per camera. |
+| **Object re-identification across cameras** | "Track the same vehicle across multiple cameras for full trajectory reconstruction." | Multi-camera ReID requires appearance feature extraction, cross-camera association, camera-to-camera transition time modeling. Massive ML complexity for marginal calibration value. Single-camera counts are sufficient for demand calibration. | Per-camera independent counting. Aggregate counts per edge. No cross-camera identity linking needed for demand calibration. |
+| **Photorealistic rendering (PBR materials, shadows, reflections)** | "The 3D city should look like Google Earth." | PBR rendering requires: normal maps, roughness maps, metallic maps, environment maps, shadow maps (cascaded shadow maps for outdoor), screen-space reflections. Each adds a render pass and texture memory. At 280K agents + 50K buildings, GPU budget is tight. | Flat-shaded buildings with ambient + diffuse lighting. Colored by building type. Night lights as emissive. 80% visual impact at 20% GPU cost. |
+| **CityGML/3DTiles building models** | "Use detailed architectural models for accurate building representation." | No CityGML dataset exists for HCMC. 3DTiles requires tile server infrastructure. Both add ops complexity. OSM building footprints with height extrusion are available and sufficient. | OSM building extrusion. Heights from `building:levels` tag (default 3 floors = 9m). Roof shapes flat (sufficient for HCMC). |
+| **Full RTSP camera protocol support** | "Connect to any IP camera via RTSP stream." | RTSP requires ffmpeg/GStreamer bindings, codec negotiation, reconnection handling, network timeout management. Cross-platform native RTSP in Rust is immature. | Accept pre-decoded video frames: (1) read from local video file, (2) receive frames via HTTP endpoint from a lightweight ffmpeg sidecar, (3) direct USB webcam via v4l2/AVFoundation. Start with file-based, add live later. |
+| **GPU-accelerated inference** | "Run YOLO on GPU for faster detection." | On macOS Metal, ONNX Runtime GPU support via CoreML is limited for YOLO models. Metal Performance Shaders backend exists but has compatibility issues. The simulation already uses the GPU heavily -- sharing GPU between sim compute and ML inference creates resource contention. | CPU inference via `ort` crate with ONNX Runtime. YOLOv8n processes 640x480 at ~30ms on M1/M2 CPU. Sufficient for 1-5 cameras at 5-10 FPS detection rate. GPU stays dedicated to simulation + rendering. |
+| **Vegetation and street furniture** | "Add trees, benches, streetlights for realism." | Thousands of instanced objects that don't affect simulation. Pure visual cost with no analytical value. Trees occlude vehicles in 3D view, making the visualization worse for analysis. | Streetlights only (needed for night lighting). No trees, no benches. Keep the view clean for traffic analysis. |
 
 ## Feature Dependencies
 
 ```
-[Multi-GPU Wave-Front Dispatch]
-    |-- requires --> [v1.0 GPU Compute Pipeline]
-    |-- requires --> [Network Graph Partitioning (METIS)]
-    |-- requires --> [Fixed-Point Arithmetic]
-    |-- enables  --> [280K Agent Scale]
+[Camera Feed Ingestion]
+    |-- enables --> [Vehicle/Pedestrian Detection (YOLO + ort)]
+                       |-- enables --> [Per-Class Counting + Tracking]
+                                          |-- requires --> [Camera-to-Network Spatial Mapping]
+                                          |-- enables --> [Demand Adjustment from Counts]
+                                                             |-- requires --> [Existing velos-calibrate]
+                                                             |-- requires --> [Existing velos-demand spawner]
+                                                             |-- enables --> [Real-Time Calibration Loop]
 
-[Fixed-Point Arithmetic]
-    |-- requires --> [Wave-Front Dispatch] (sequential in-lane makes FP feasible)
-    |-- enables  --> [Cross-GPU Determinism]
-    |-- enables  --> [Deterministic Replay for Scenario Comparison]
+[Speed Estimation from Camera]
+    |-- requires --> [Detection + Tracking]
+    |-- requires --> [Camera Calibration (manual extrinsics)]
+    |-- enhances --> [Demand Calibration (speed-based validation)]
 
-[CCH Dynamic Pathfinding]
-    |-- requires --> [5-District Network Graph]
-    |-- requires --> [Prediction Ensemble] (provides dynamic edge weights)
-    |-- replaces --> [v1.0 A* on petgraph]
-    |-- enables  --> [Dynamic Agent Rerouting (500/step)]
+[3D Depth Buffer + Perspective Camera]
+    |-- requires --> [Existing wgpu Renderer]
+    |-- enables --> [3D Building Extrusions]
+    |-- enables --> [3D Road Surfaces]
+    |-- enables --> [3D Agent LOD Rendering]
+    |-- enables --> [Terrain Rendering]
+    |-- enables --> [Day/Night Lighting]
 
-[Prediction Ensemble (BPR+ETS+Historical)]
-    |-- requires --> [Simulation State Snapshots]
-    |-- requires --> [Historical Calibration Data]
-    |-- enhances --> [CCH Routing] (weight updates every 60 sim-seconds)
+[3D Building Extrusions]
+    |-- requires --> [3D Pipeline (depth + perspective)]
+    |-- requires --> [OSM Building Data (existing import pipeline)]
+    |-- requires --> [Polygon Triangulation (earcut)]
 
-[Meso-Micro Hybrid]
-    |-- requires --> [v1.0 Micro Models (IDM/MOBIL/Sublane) at scale]
-    |-- requires --> [Network Zone Classification]
-    |-- requires --> [CCH Routing] (meso zones need fast pathfinding)
-    |-- conflicts --> [Full-micro-only at 280K] (may not be needed if GPUs handle full micro)
+[3D Agent LOD Rendering]
+    |-- requires --> [3D Pipeline]
+    |-- requires --> [glTF Mesh Loading (gltf crate)]
+    |-- requires --> [Camera Distance Calculation]
+    |-- enhances --> [Existing instanced 2D renderer (replaces at close zoom)]
 
-[gRPC/REST API]
-    |-- requires --> [v1.0 Simulation Engine (refactored for server mode)]
-    |-- enables  --> [WebSocket Streaming]
-    |-- enables  --> [Scenario DSL/Batch Runner]
-    |-- enables  --> [deck.gl Visualization]
-    |-- enables  --> [External Tool Integration]
+[Terrain from DEM]
+    |-- requires --> [3D Pipeline]
+    |-- requires --> [SRTM DEM Data]
+    |-- enhances --> [Building placement (buildings sit on terrain)]
 
-[WebSocket Streaming + Redis Pub/Sub]
-    |-- requires --> [gRPC/REST API]
-    |-- requires --> [Redis service]
-    |-- enables  --> [deck.gl Real-Time Visualization]
-    |-- enables  --> [Multi-Viewer Scaling (100+ clients)]
+[Day/Night Lighting]
+    |-- requires --> [3D Pipeline with vertex normals]
+    |-- requires --> [Simulation time-of-day]
+    |-- enhances --> [Visual realism of 3D scene]
 
-[deck.gl Web Visualization]
-    |-- requires --> [WebSocket Streaming]
-    |-- requires --> [PMTiles Map Tiles]
-    |-- requires --> [FlatBuffers Binary Protocol]
+[Camera FOV Overlay]
+    |-- requires --> [Camera spatial config (lat/lon/heading/FOV)]
+    |-- independent of --> [3D pipeline (works in 2D too)]
 
-[CesiumJS 3D Visualization]
-    |-- requires --> [deck.gl infrastructure] (shares WebSocket, API, tiles)
-    |-- optional --> [Terrain tiles from SRTM DEM]
+[2D/3D View Toggle]
+    |-- requires --> [Both Camera2D and Camera3D implemented]
+    |-- requires --> [3D pipeline operational]
 
-[GEH/RMSE Calibration]
-    |-- requires --> [5-District Network + All Agent Models Running]
-    |-- requires --> [Traffic Count Data (HCMC DOT, ~50 locations)]
-    |-- requires --> [Data Export (simulated counts for comparison)]
-    |-- enables  --> [Validated Model -- output is engineering data, not animation]
+[Motorbike-Specific Fine-Tuning]
+    |-- requires --> [Base detection pipeline working]
+    |-- requires --> [Labeled HCMC training data]
+    |-- enhances --> [Detection accuracy for HCMC motorbikes]
 
-[Scenario DSL + Batch Runner]
-    |-- requires --> [Checkpoint/Restart (for deterministic replay)]
-    |-- requires --> [Data Export (for MOE computation)]
-    |-- requires --> [GEH Calibration (baseline must be validated first)]
-    |-- enables  --> [MOE Comparison Tables]
-
-[Parquet Checkpoint/Restart]
-    |-- requires --> [ECS State Serialization (arrow-rs)]
-    |-- enables  --> [Long-Running Simulations (24h+)]
-    |-- enables  --> [Scenario Batch Runs]
-    |-- enables  --> [Crash Recovery]
-
-[Docker Compose Deployment]
-    |-- requires --> [All Service Binaries (sim, api, viz)]
-    |-- enables  --> [Reproducible Deployment]
-    |-- enables  --> [Monitoring Stack (Prometheus/Grafana)]
-
-[Pedestrian Adaptive Workgroups]
-    |-- requires --> [v1.0 Social Force Model]
-    |-- requires --> [GPU Prefix-Sum Compaction Shader]
-    |-- enhances --> [Pedestrian Performance at 20K agents]
-
-[Bus Dwell + Bicycle Agents]
-    |-- requires --> [v1.0 Agent Type System]
-    |-- requires --> [GTFS Import (130 HCMC bus routes)]
-    |-- enhances --> [Multi-Modal Realism]
-
-[HBEFA Emissions]
-    |-- requires --> [Per-Step Agent Speed/Type Data]
-    |-- requires --> [Edge Gradient Data]
-    |-- enhances --> [Policy Evaluation (motorbike restriction zones)]
+[Detection Confidence Heatmap]
+    |-- requires --> [Camera-to-network mapping]
+    |-- requires --> [Detection results with confidence scores]
 ```
 
 ### Dependency Notes
 
-- **Multi-GPU + Fixed-Point are inseparable:** Fixed-point ensures cross-GPU determinism. Without it, multi-GPU results diverge per-run, making calibration impossible. Ship together.
-- **CCH needs Prediction to justify its complexity:** CCH's value is 3ms dynamic weight updates. Without prediction, CCH is just "faster A*" -- still useful but doesn't justify the HIGH implementation cost. Build CCH after prediction overlay exists.
-- **Meso-micro may not be needed:** At 280K agents on 2-4 GPUs with ~8ms frame time and 92ms headroom (per `01-simulation-engine.md`), full-micro everywhere is likely feasible. Meso-micro is insurance. Defer unless performance proves otherwise.
-- **Scenario DSL requires calibrated baseline:** Running "what-if" scenarios against an uncalibrated model produces meaningless MOE comparisons. Calibration must precede scenario work.
-- **deck.gl sits atop a deep infrastructure stack:** Visualization requires WebSocket + Redis + FlatBuffers + API server + PMTiles. The frontend is the easy part; the backend plumbing is the work.
-- **API server is the platform unlock:** gRPC/REST transforms a desktop app into a platform. Everything external (visualization, notebooks, scenarios, monitoring) flows through the API. This is the single most important architectural change from v1.0.
+- **Camera pipeline is self-contained:** Detection, counting, and demand adjustment form a pipeline independent of 3D rendering. These two feature tracks (camera + 3D) can be built in parallel.
+- **3D pipeline is a renderer rewrite, not an extension:** The current renderer has no depth buffer, no perspective projection, no normals, no lighting. Moving to 3D means building a new render pipeline alongside the existing 2D one, then toggling between them.
+- **Detection does not need 3D:** Camera integration works entirely on 2D data (video frames in, counts out). It feeds the simulation engine, not the renderer.
+- **Buildings are the highest-effort 3D feature:** Parsing OSM polygons, triangulating, extruding, and rendering 50K buildings requires significant geometry processing. This should be the last 3D feature built after the pipeline (depth/camera/lighting) is proven.
+- **Agent LOD is the highest-impact 3D feature:** Users notice vehicles first. Getting 3D vehicle meshes rendering with proper LOD gives the biggest visual upgrade per effort invested.
+- **Terrain is optional but improves building placement:** Without terrain, buildings float or clip through the ground plane. With terrain, buildings sit naturally on the surface. Build terrain before buildings for proper placement.
 
 ## MVP Definition
 
-### Launch With (v1.1 Core Platform)
+### Launch With (v1.2 Core)
 
-Minimum viable digital twin -- demonstrates 280K-agent simulation with web visualization and programmatic control.
+Minimum viable camera integration + 3D scene -- demonstrates the digital twin loop and 3D city view.
 
-- [ ] **Multi-GPU wave-front dispatch + fixed-point** -- Performance unlock for 280K agents. These two ship together.
-- [ ] **5-district HCMC network** -- Extends v1.0 District 1. Includes network cleaning, lane inference, HCMC-specific rules.
-- [ ] **gRPC/REST API** -- Platform transformation. Non-negotiable for any external integration.
-- [ ] **WebSocket streaming + Redis pub/sub** -- Enables web visualization and multi-viewer support.
-- [ ] **deck.gl 2D visualization** -- Primary web interface. ScatterplotLayer + HeatmapLayer + signal states.
-- [ ] **Parquet checkpoint/restart** -- Crash recovery and batch run foundation.
-- [ ] **Docker Compose deployment** -- Reproducible 7-service stack.
-- [ ] **Prometheus/Grafana monitoring** -- Operational visibility at scale.
-- [ ] **Data export (FCD, Parquet, CSV)** -- Minimum output for analysis.
-- [ ] **PMTiles map tiles** -- Base map for web visualization.
-- [ ] **Bus dwell + bicycle agents** -- Complete the multi-modal agent roster.
+- [ ] **Camera feed ingestion (file-based)** -- Load video files or image sequences. No RTSP yet.
+- [ ] **Vehicle/pedestrian detection (YOLOv8 + ort)** -- Detect car, motorbike, bus, truck, pedestrian from camera frames.
+- [ ] **Per-class counting with simple tracker** -- Count vehicles crossing virtual detection lines per camera.
+- [ ] **Camera-to-network mapping (config-driven)** -- Associate each camera with edge_id(s) via TOML config.
+- [ ] **Demand adjustment from counts** -- Compare observed vs simulated counts, compute OD scaling factors, update spawn rates.
+- [ ] **3D perspective camera + depth buffer** -- Upgrade renderer to support 3D viewing with depth testing.
+- [ ] **3D road surface polygons** -- Render roads as textured polygons with lane markings.
+- [ ] **3D agent LOD (mesh + billboard + dot)** -- Vehicle meshes close up, billboards mid-range, dots far away.
+- [ ] **Day/night ambient lighting** -- Basic directional light following simulation time-of-day.
+- [ ] **2D/3D view toggle** -- Switch between existing 2D top-down and new 3D perspective.
+- [ ] **Camera FOV overlay** -- Show camera positions and coverage areas on map.
 
-### Add After Core Validated (v1.1 Enhancement)
+### Add After Core Validated (v1.2 Enhancement)
 
-Features to add once the multi-GPU simulation and web platform are proven.
+Features to add once detection pipeline and 3D rendering are proven.
 
-- [ ] **CCH dynamic pathfinding** -- Replace v1.0 A* when routing becomes bottleneck at 500 reroutes/step.
-- [ ] **Prediction ensemble (BPR+ETS+historical)** -- Add once CCH is live for dynamic weight updates.
-- [ ] **GEH/RMSE calibration with Bayesian optimization** -- Add when traffic count data from HCMC DOT is available and all agent models are running.
-- [ ] **Pedestrian adaptive GPU workgroups** -- Upgrade when 20K pedestrians cause perf issues with basic spatial hash.
-- [ ] **Scenario DSL + batch runner + MOE comparison** -- Add after calibration validates the base model.
-- [ ] **HBEFA emissions** -- Add when policy evaluation use cases emerge.
-- [ ] **GeoJSON export** -- Add when GIS users request it.
+- [ ] **3D building extrusions from OSM** -- Add when 3D pipeline is stable and performing well. 50K buildings is a significant GPU load.
+- [ ] **Terrain from SRTM DEM** -- Add when buildings are rendering to provide proper ground surface.
+- [ ] **Real-time calibration loop** -- Add when offline demand adjustment is validated against known counts.
+- [ ] **Motorbike-specific YOLO fine-tuning** -- Add when HCMC training data is available and base pipeline is proven.
+- [ ] **Speed estimation from camera** -- Add when detection + tracking is reliable and camera calibration data exists.
+- [ ] **Detection confidence heatmap** -- Add when multiple cameras are integrated and coverage gaps are visible.
 
 ### Future Consideration (v2+)
 
-- [ ] **Meso-micro hybrid** -- Defer unless full-micro hits performance wall at 280K on 2-4 GPUs. If frame time stays under 15ms, meso is unnecessary complexity.
-- [ ] **CesiumJS 3D** -- Presentation-only. Add for stakeholder demos once deck.gl 2D proves the platform.
-- [ ] **Actuated signal control** -- HCMC is overwhelmingly fixed-time. Minimal realism gain for HCMC specifically.
+- [ ] **Live camera feeds (RTSP/HTTP)** -- Defer until file-based pipeline is validated. Requires ffmpeg sidecar.
+- [ ] **GPU-accelerated inference** -- Defer until CPU inference is proven insufficient. macOS Metal ONNX support is immature.
+- [ ] **Shadows (cascaded shadow maps)** -- Defer. HIGH complexity, LOW analytical value. Visual polish only.
+- [ ] **PBR materials** -- Defer. Requires material textures and multiple render passes. Flat shading is sufficient.
+- [ ] **Cross-camera vehicle ReID** -- Defer. Massive ML complexity for marginal calibration value.
 
 ## Feature Prioritization Matrix
 
 | Feature | User Value | Implementation Cost | Priority |
 |---------|------------|---------------------|----------|
-| Multi-GPU wave-front dispatch | HIGH | HIGH | P1 |
-| Fixed-point arithmetic | HIGH | HIGH | P1 |
-| 5-district HCMC network (OSM) | HIGH | MEDIUM | P1 |
-| gRPC/REST API | HIGH | MEDIUM | P1 |
-| WebSocket + Redis pub/sub | HIGH | MEDIUM | P1 |
-| deck.gl 2D visualization | HIGH | MEDIUM | P1 |
-| Parquet checkpoint/restart | HIGH | MEDIUM | P1 |
-| Data export (FCD, Parquet, CSV) | HIGH | LOW | P1 |
-| Docker Compose deployment | MEDIUM | LOW | P1 |
-| Prometheus/Grafana monitoring | MEDIUM | LOW | P1 |
-| PMTiles map tiles | MEDIUM | LOW | P1 |
-| Bus dwell + bicycle agents | MEDIUM | LOW | P1 |
-| CCH dynamic pathfinding | HIGH | HIGH | P2 |
-| Prediction ensemble | HIGH | MEDIUM | P2 |
-| GEH/RMSE calibration | HIGH | MEDIUM | P2 |
-| Pedestrian adaptive workgroups | MEDIUM | MEDIUM | P2 |
-| Scenario DSL + batch runner | MEDIUM | MEDIUM | P2 |
-| HBEFA emissions | LOW | LOW | P2 |
-| Meso-micro hybrid | MEDIUM | HIGH | P3 |
-| CesiumJS 3D visualization | LOW | MEDIUM | P3 |
-| Actuated signal control | LOW | LOW | P3 |
+| Vehicle/pedestrian detection (YOLO + ort) | HIGH | MEDIUM | P1 |
+| Per-class counting + tracking | HIGH | LOW | P1 |
+| Camera-to-network spatial mapping | HIGH | LOW | P1 |
+| Demand adjustment from counts | HIGH | MEDIUM | P1 |
+| Camera feed ingestion (file-based) | HIGH | LOW | P1 |
+| 3D perspective camera + depth buffer | HIGH | MEDIUM | P1 |
+| 3D road surface polygons | HIGH | MEDIUM | P1 |
+| 3D agent LOD rendering | HIGH | HIGH | P1 |
+| Day/night lighting | MEDIUM | MEDIUM | P1 |
+| 2D/3D view toggle | MEDIUM | LOW | P1 |
+| Camera FOV overlay | MEDIUM | LOW | P1 |
+| 3D building extrusions | HIGH | HIGH | P2 |
+| Terrain from DEM | MEDIUM | MEDIUM | P2 |
+| Real-time calibration loop | HIGH | HIGH | P2 |
+| Motorbike YOLO fine-tuning | MEDIUM | MEDIUM | P2 |
+| Speed estimation from camera | MEDIUM | HIGH | P2 |
+| Detection confidence heatmap | LOW | LOW | P2 |
+| Live camera feeds (RTSP) | MEDIUM | MEDIUM | P3 |
+| Shadows | LOW | HIGH | P3 |
+| PBR materials | LOW | HIGH | P3 |
 
 **Priority key:**
-- P1: Must have for v1.1 launch -- core digital twin platform with multi-GPU and web visualization
-- P2: Should have -- enables validation, prediction, and scenario analysis
-- P3: Nice to have -- defer unless specific need arises
+- P1: Must have for v1.2 launch -- camera detection feeding demand + 3D city visualization
+- P2: Should have -- enhances detection accuracy, visual quality, and calibration sophistication
+- P3: Nice to have -- visual polish and operational features for production deployment
 
 ## Competitor Feature Analysis
 
-| Feature | SUMO | VISSIM | Aimsun | LPSim (2024) | VELOS v1.1 |
-|---------|------|--------|--------|-------------|-------------|
-| **Car-following** | Krauss (default), IDM | Wiedemann 74/99 | Gipps, IDM | Simplified IDM | IDM (HCMC-calibrated) |
-| **Lane-change** | LC2013, SL2015 | Proprietary | Proprietary | N/A (meso) | MOBIL + sublane filtering |
-| **Motorbike sublane** | SL2015 (discrete, 0.8m slots) | External Driver Model hack | No native support | None | Continuous lateral (FixedQ8_8) |
-| **GPU compute** | None (CPU only) | None (CPU only) | None (CPU only) | CUDA multi-GPU (meso) | wgpu multi-GPU (micro) |
-| **Scale (real-time)** | ~50-100K (CPU bound) | ~20-50K (CPU bound) | ~100K (meso) | 2.8M (meso, batch) | 280K (micro, real-time) |
-| **Pathfinding** | Dijkstra/A*/CH | Proprietary DTA | Proprietary | BFS-like | CCH (3ms dynamic update) |
-| **Prediction** | None built-in | Limited | Aimsun Predict (ML) | None | In-process BPR+ETS+historical |
-| **Meso-micro hybrid** | Separate mode | No | Yes (flagship) | Meso only | Graduated buffer (P3) |
-| **Web visualization** | SUMO-GUI (desktop) | Desktop only | Desktop only | None | deck.gl 2D + CesiumJS 3D |
-| **API** | TraCI (TCP socket) | COM interface | Python/C++ SDK | None | gRPC + REST + WebSocket |
-| **Calibration** | Manual + external tools | Built-in optimizer | Built-in optimizer | None | GEH + Bayesian (argmin) |
-| **Emissions** | HBEFA via external tools | EnViVer integration | None built-in | None | HBEFA native (Rust) |
-| **Scenario comparison** | XML scenarios, manual | COM scripting | Built-in | None | DSL + batch runner + MOE |
-| **Checkpoint** | State save (XML) | Snapshot | Snapshot | None | Parquet (compressed, rolling) |
-| **Determinism** | Yes (CPU, single-thread) | Stochastic (seed) | Stochastic (seed) | Not specified | Yes (fixed-point, cross-GPU) |
-| **License** | EPL-2.0 (open) | Commercial | Commercial | Research | Proprietary (TBD) |
+| Feature | SUMO/SUMO-GUI | VISSIM | PTV Visum | VELOS v1.2 |
+|---------|---------------|--------|-----------|-------------|
+| **Camera CV integration** | None built-in | None built-in | External (PTV Optima) | Native YOLO pipeline in Rust |
+| **Detection classes** | N/A | N/A | Car/truck/bus | Car/motorbike/bus/truck/bicycle/pedestrian |
+| **Demand calibration from counts** | External tools (OD estimation) | External (PTV) | Built-in (matrix estimation) | Built-in (extending velos-calibrate) |
+| **Real-time calibration** | No | No | PTV Optima (commercial) | In-process, streaming |
+| **3D rendering** | SUMO-GUI (basic 3D, FPS drops >10K agents) | 3D with OSG/Unreal (commercial) | 2D only | Native wgpu 3D (single binary) |
+| **Building rendering** | Basic block extrusions | Detailed 3D models | No | OSM building extrusions |
+| **Agent LOD** | Fixed 3D models (no LOD) | 3-level LOD | N/A | 3-tier: mesh/billboard/dot |
+| **Lighting** | Basic OpenGL lighting | Full lighting | N/A | Day/night directional + ambient |
+| **Scale at 60FPS** | ~5K agents in 3D | ~20K agents in 3D | N/A (2D) | Target: 280K agents (LOD) |
+| **Platform** | Desktop (C++) | Desktop (C++) | Desktop (C++) | Native macOS (Rust, single binary) |
 
-**Key competitive positions for v1.1:**
-1. **Only GPU-accelerated microscopic traffic sim.** LPSim is GPU but mesoscopic only.
-2. **Only sim with native motorbike sublane at 200K+ scale.** SUMO's SL2015 is discrete slots, not continuous.
-3. **Only sim with CCH dynamic routing.** All competitors use Dijkstra/A*/CH requiring full rebuild for dynamic weights.
-4. **Web-native visualization platform.** All competitors are desktop-first.
-5. **Cross-GPU deterministic simulation.** No competitor offers bitwise-identical results across GPU vendors.
+**Key competitive positions for v1.2:**
+1. **Only traffic sim with integrated camera CV pipeline.** All competitors require external tools/partnerships for camera detection.
+2. **Native GPU 3D rendering at 280K agent scale.** SUMO-GUI struggles above 10K in 3D. VISSIM needs commercial Unreal plugin.
+3. **Motorbike-specific detection.** No commercial traffic CV product handles SE Asian motorbike-dominant traffic well.
+4. **Single binary digital twin.** Simulation + detection + 3D rendering in one Rust binary. No browser, no game engine, no Python.
 
 ## Sources
 
-- [LPSim multi-GPU traffic simulation (UC Berkeley, 2024)](https://arxiv.org/html/2406.08496) - HIGH confidence (peer-reviewed)
-- [CCH Survey (Feb 2025)](https://arxiv.org/abs/2502.10519) - HIGH confidence (comprehensive academic survey)
-- [FHWA Traffic Analysis Toolbox - MOE definitions](https://ops.fhwa.dot.gov/publications/fhwahop08054/fhwahop08054.pdf) - HIGH confidence (official US DOT)
-- [FHWA Microsimulation Guidelines - Calibration](https://ops.fhwa.dot.gov/trafficanalysistools/tat_vol3/sect6.htm) - HIGH confidence (official)
-- [Aimsun Hybrid Meso-Micro documentation](https://docs.aimsun.com/next/22.0.2/UsersManual/HybridSimulator.html) - HIGH confidence (official docs)
-- [HBEFA 5.1 (Oct 2025)](https://www.hbefa.net/) - HIGH confidence (official)
-- [deck.gl framework](https://deck.gl/) - HIGH confidence (official)
-- [Hybrid meso-micro traffic simulation (Burghout)](https://www.diva-portal.org/smash/get/diva2:14700/FULLTEXT01.pdf) - HIGH confidence (academic)
-- [SUMO vs VISSIM comparison](https://thinktransportation.net/traffic-simulations-software-a-comparison-of-sumo-ptv-vissim-aimsun-and-cube/) - MEDIUM confidence
-- [Digital twin real-time calibration](https://www.sciencedirect.com/science/article/pii/S1474034622003160) - MEDIUM confidence
-- [Traffic simulation case studies review (2025)](https://ietresearch.onlinelibrary.wiley.com/doi/full/10.1049/itr2.70021) - MEDIUM confidence
-- VELOS architecture docs (`docs/architect/00-07`) - HIGH confidence (primary source)
+- [Vision-based vehicle counting, speed estimation pipeline (IEEE 2020)](https://ieeexplore.ieee.org/document/9130874/) - HIGH confidence
+- [Digital twins for vision-based vehicle speed detection (2024)](https://arxiv.org/abs/2407.08380) - HIGH confidence
+- [Digital twin intersection real-time monitoring (MDPI 2025)](https://www.mdpi.com/2412-3811/10/8/204) - HIGH confidence
+- [Camera FOV spatial accuracy with 3D surface model (TRR 2025)](https://journals.sagepub.com/doi/10.1177/03611981251398747) - HIGH confidence
+- [Camera perspective to BEV transformation (2024)](https://arxiv.org/html/2408.05577v2) - MEDIUM confidence
+- [OD matrix estimation from video recordings (ScienceDirect)](https://www.sciencedirect.com/science/article/pii/S1877705817301169) - HIGH confidence
+- [Real-time OD calibration (MIT DSpace)](https://dspace.mit.edu/bitstream/handle/1721.1/129009/1227096827-MIT.pdf) - HIGH confidence
+- [OD calibration with segment counts (arXiv 2025)](https://arxiv.org/html/2502.19528) - MEDIUM confidence
+- [ort crate - ONNX Runtime for Rust](https://ort.pyke.io/) - HIGH confidence
+- [YOLOv8 ONNX Rust implementation](https://github.com/AndreyGermanov/yolov8_onnx_rust) - HIGH confidence
+- [gltf-rs crate for Rust](https://github.com/gltf-rs/gltf) - HIGH confidence
+- [Learn wgpu - depth buffer tutorial](https://sotrh.github.io/learn-wgpu/beginner/tutorial8-depth/) - HIGH confidence
+- [Learn wgpu - model loading tutorial](https://sotrh.github.io/learn-wgpu/beginner/tutorial9-models/) - HIGH confidence
+- [terra - wgpu terrain rendering in Rust](https://github.com/fintelia/terra) - MEDIUM confidence
+- [OSM2World - OSM to 3D model export](https://osm2world.org/) - HIGH confidence
+- [OSM 3D building data](https://wiki.openstreetmap.org/wiki/3D) - HIGH confidence
+- [Reshadable Impostors with LOD (CGF 2025)](https://onlinelibrary.wiley.com/doi/10.1111/cgf.70183) - HIGH confidence
+- [GPU crowd rendering with impostors](https://www.researchgate.net/publication/220979001_Impostors_and_pseudo-instancing_for_GPU_crowd_rendering) - HIGH confidence
+- [rend3 - wgpu 3D renderer](https://docs.rs/rend3) - MEDIUM confidence
+- [wgpu official documentation](https://wgpu.rs/) - HIGH confidence
+- VELOS architecture docs (`docs/architect/00-07`) and existing codebase - HIGH confidence
 
 ---
-*Feature research for: GPU-accelerated traffic microsimulation digital twin platform (v1.1 scale-up)*
-*Researched: 2026-03-07*
+*Feature research for: Camera CV integration + 3D wgpu native rendering for traffic digital twin*
+*Researched: 2026-03-09*
