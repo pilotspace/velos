@@ -161,19 +161,22 @@ impl SimWorld {
                 .world
                 .query_one_mut::<(&Route, &RoadPosition)>(entity)
                 .unwrap();
-            if route.current_step + 1 >= route.path.len() {
-                None
+            if route.current_step + 2 >= route.path.len() {
+                None // No more edges — route complete
             } else {
-                let from = NodeIndex::new(route.path[route.current_step] as usize);
-                let to = NodeIndex::new(route.path[route.current_step + 1] as usize);
-                let edge = self
+                // NEXT edge: from the node we're arriving at to the one after.
+                // path[step] → path[step+1] is the CURRENT edge (already traversed).
+                // path[step+1] → path[step+2] is the NEXT edge we're advancing to.
+                let junction_node = NodeIndex::new(route.path[route.current_step + 1] as usize);
+                let next_node = NodeIndex::new(route.path[route.current_step + 2] as usize);
+                let next_edge = self
                     .road_graph
                     .inner()
-                    .find_edge(from, to)
+                    .find_edge(junction_node, next_node)
                     .map(|e| e.index() as u32);
-                // The target node is the one the agent is arriving at
+                // The target node is the one the agent is arriving at (potential junction)
                 let target_node_u32 = route.path[route.current_step + 1];
-                Some((edge, route.current_step + 1, target_node_u32))
+                Some((next_edge, route.current_step + 1, target_node_u32))
             }
         };
 

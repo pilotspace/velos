@@ -127,6 +127,15 @@ impl GpuState {
         // Upload road network lines for rendering.
         renderer.upload_road_lines(&device, &road_lines);
 
+        // Initialize map tile renderer (PMTiles background layer).
+        let pmtiles_path = std::path::Path::new("data/hcmc/hcmc.pmtiles");
+        if pmtiles_path.exists() {
+            renderer.init_map_tiles(&device, Some(pmtiles_path));
+            log::info!("Map tiles initialized from {:?}", pmtiles_path);
+        } else {
+            log::warn!("PMTiles not found at {:?}, map tiles disabled", pmtiles_path);
+        }
+
         // Upload guide lines and debug overlay for junction visualization.
         renderer.update_guide_lines(&device, &sim.junction_data);
         renderer.update_debug_overlay(&device, &sim.junction_data);
@@ -180,6 +189,9 @@ impl GpuState {
         let frame_dt = now.duration_since(self.last_frame_time).as_secs_f64();
         self.last_frame_time = now;
         self.sim.metrics.frame_time_ms = frame_dt * 1000.0;
+
+        // Update map tiles (load/decode visible tiles based on camera viewport).
+        self.renderer.update_map_tiles(&self.camera, &self.device);
 
         let base_dt = 0.016_f64; // ~60 FPS base timestep
         let (motorbikes, cars, mut pedestrians) = self.sim.tick_gpu(

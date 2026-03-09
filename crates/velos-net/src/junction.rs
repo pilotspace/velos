@@ -19,6 +19,11 @@ const MIN_ARC_LENGTH_M: f64 = 1.0;
 /// Number of sample points for arc-length estimation.
 const ARC_LENGTH_SAMPLES: usize = 20;
 
+/// Bezier control point tension: 0.0 = straight line, 1.0 = full centroid.
+/// 0.3 gives tighter turns that match real intersection geometry better than
+/// using the raw junction node position (which creates unrealistically wide arcs).
+const BEZIER_TENSION: f64 = 0.3;
+
 /// Number of sample steps per curve for conflict detection grid search.
 const CONFLICT_SEARCH_STEPS: usize = 30;
 
@@ -218,7 +223,17 @@ pub fn precompute_junction(
                 continue;
             }
             let p2 = g[out.target()].pos;
-            let arc_length = estimate_arc_length(&p0, &centroid, &p2, ARC_LENGTH_SAMPLES);
+
+            // Compute tension-weighted control point: blend between straight-line
+            // midpoint and junction centroid. BEZIER_TENSION=0.3 gives tighter,
+            // more realistic turns than using the raw centroid (which bulges outward).
+            let midpoint = [(p0[0] + p2[0]) / 2.0, (p0[1] + p2[1]) / 2.0];
+            let p1 = [
+                midpoint[0] + BEZIER_TENSION * (centroid[0] - midpoint[0]),
+                midpoint[1] + BEZIER_TENSION * (centroid[1] - midpoint[1]),
+            ];
+
+            let arc_length = estimate_arc_length(&p0, &p1, &p2, ARC_LENGTH_SAMPLES);
 
             // Filter degenerate curves (lesson #2)
             if arc_length < MIN_ARC_LENGTH_M {
@@ -229,7 +244,7 @@ pub fn precompute_junction(
                 entry_edge: inc.id().index() as u32,
                 exit_edge: out.id().index() as u32,
                 p0,
-                p1: centroid,
+                p1,
                 p2,
                 arc_length,
                 exit_offset_m: 0.1,
