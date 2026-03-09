@@ -414,30 +414,13 @@ fn precompute_merged_junction(
     let g = graph.inner();
     let cluster_set: HashSet<NodeIndex> = cluster.iter().copied().collect();
 
-    // Use the highest-degree node's position as centroid. Averaging
-    // (even degree-weighted) still drifts when multiple close nodes have
-    // similar degrees but are offset from the road crossing. The node
-    // with the most connections is the actual intersection center.
-    let centroid = {
-        let mut best_node = cluster[0];
-        let mut best_degree = 0usize;
-        for &node in cluster {
-            let degree = g.edges_directed(node, Direction::Incoming).count()
-                + g.edges_directed(node, Direction::Outgoing).count();
-            if degree > best_degree {
-                best_degree = degree;
-                best_node = node;
-            }
-        }
-        g[best_node].pos
-    };
-
-    // Collect peripheral incoming edges (source outside cluster, target inside)
-    // and peripheral outgoing edges (source inside cluster, target outside).
-    // Also collect internal edge IDs.
+    // Collect peripheral edges FIRST so we can compute centroid from
+    // edge geometry (the actual road lines) rather than node positions.
     struct PeripheralEdge {
         edge_id: u32,
         outer_node_pos: [f64; 2],
+        /// The cluster-side endpoint of this edge (the node inside the cluster).
+        inner_node_pos: [f64; 2],
     }
 
     let mut incoming: Vec<PeripheralEdge> = Vec::new();
@@ -453,6 +436,7 @@ fn precompute_merged_junction(
                 incoming.push(PeripheralEdge {
                     edge_id,
                     outer_node_pos: g[edge_ref.source()].pos,
+                    inner_node_pos: g[node].pos,
                 });
             }
         }
@@ -464,6 +448,7 @@ fn precompute_merged_junction(
                 outgoing.push(PeripheralEdge {
                     edge_id,
                     outer_node_pos: g[edge_ref.target()].pos,
+                    inner_node_pos: g[node].pos,
                 });
             }
         }
@@ -474,6 +459,33 @@ fn precompute_merged_junction(
     incoming.retain(|e| seen_in.insert(e.edge_id));
     let mut seen_out = HashSet::new();
     outgoing.retain(|e| seen_out.insert(e.edge_id));
+
+    // Compute centroid from edge geometry: average the cluster-side
+    // endpoints of all peripheral edges. These points sit ON the actual
+    // road lines entering the intersection, so the centroid lands where
+    // the roads converge — matching the visible map data.
+    let centroid = {
+        let mut cx = 0.0;
+        let mut cy = 0.0;
+        let total = (incoming.len() + outgoing.len()) as f64;
+        if total > 0.0 {
+            for e in incoming.iter().chain(outgoing.iter()) {
+                cx += e.inner_node_pos[0];
+                cy += e.inner_node_pos[1];
+            }
+            [cx / total, cy / total]
+        } else {
+            // Fallback: average of cluster node positions
+            let mut fx = 0.0;
+            let mut fy = 0.0;
+            for &node in cluster {
+                fx += g[node].pos[0];
+                fy += g[node].pos[1];
+            }
+            let n = cluster.len() as f64;
+            [fx / n, fy / n]
+        }
+    };
 
     // Build Bezier turns for all (peripheral_incoming, peripheral_outgoing) pairs
     let mut turns = Vec::new();
