@@ -7,7 +7,9 @@ use std::collections::HashMap;
 
 use hecs::World;
 
-use velos_core::components::{Kinematics, LateralOffset, Position, RoadPosition, VehicleType};
+use velos_core::components::{
+    JunctionTraversal, Kinematics, LateralOffset, Position, RoadPosition, VehicleType,
+};
 
 /// Frame snapshot of all agent state needed for spatial queries.
 ///
@@ -28,6 +30,9 @@ pub struct AgentSnapshot {
     pub lateral_offsets: Vec<Option<f64>>,
     /// Road position edge index per agent.
     pub edge_indices: Vec<u32>,
+    /// Junction traversal state per agent: Some((turn_index, t)) if in junction.
+    /// Needed by Plan 04 for rendering agents on Bezier curves.
+    pub junction_traversals: Vec<Option<(u16, f64)>>,
     /// Map from entity id (u32) to index in the parallel vecs.
     pub id_to_index: HashMap<u32, usize>,
 }
@@ -46,15 +51,17 @@ impl AgentSnapshot {
         let mut headings = Vec::new();
         let mut lateral_offsets = Vec::new();
         let mut edge_indices = Vec::new();
+        let mut junction_traversals = Vec::new();
         let mut id_to_index = HashMap::new();
 
-        for (pos, kin, vtype, rp, lat) in world
+        for (pos, kin, vtype, rp, lat, jt) in world
             .query::<(
                 &Position,
                 &Kinematics,
                 &VehicleType,
                 &RoadPosition,
                 Option<&LateralOffset>,
+                Option<&JunctionTraversal>,
             )>()
             .iter()
         {
@@ -67,6 +74,7 @@ impl AgentSnapshot {
             headings.push(kin.heading);
             lateral_offsets.push(lat.map(|l: &LateralOffset| l.lateral_offset));
             edge_indices.push(rp.edge_index);
+            junction_traversals.push(jt.map(|j| (j.turn_index, j.t)));
             id_to_index.insert(eid, idx);
         }
 
@@ -78,6 +86,7 @@ impl AgentSnapshot {
             headings,
             lateral_offsets,
             edge_indices,
+            junction_traversals,
             id_to_index,
         }
     }

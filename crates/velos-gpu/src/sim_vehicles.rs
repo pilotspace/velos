@@ -7,7 +7,8 @@
 use hecs::Entity;
 
 use velos_core::components::{
-    CarFollowingModel, GpuAgentState, LateralOffset, Position, RoadPosition, VehicleType,
+    CarFollowingModel, GpuAgentState, JunctionTraversal, LateralOffset, Position, RoadPosition,
+    VehicleType,
 };
 use velos_core::cost::AgentProfile;
 use velos_core::fixed_point::{FixLat, FixPos, FixSpd};
@@ -29,7 +30,7 @@ impl SimWorld {
         let mut entity_map: Vec<Entity> = Vec::new();
         let mut emergency_list: Vec<GpuEmergencyVehicle> = Vec::new();
 
-        for (entity, rp, kin, vtype, lat, cf_model, bus_state, pos, agent_profile) in self
+        for (entity, rp, kin, vtype, lat, cf_model, bus_state, pos, agent_profile, jt) in self
             .world
             .query_mut::<(
                 Entity,
@@ -41,10 +42,15 @@ impl SimWorld {
                 Option<&velos_vehicle::bus::BusState>,
                 &Position,
                 Option<&AgentProfile>,
+                Option<&JunctionTraversal>,
             )>()
             .into_iter()
         {
             if *vtype == VehicleType::Pedestrian {
+                continue;
+            }
+            // Bug 6 fix: skip junction-traversing agents from edge-based physics
+            if jt.is_some() {
                 continue;
             }
 

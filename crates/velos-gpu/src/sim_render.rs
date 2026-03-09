@@ -43,6 +43,12 @@ impl SimWorld {
             )>()
             .iter()
         {
+            // Bug 7 fix: skip agents with NaN/Inf positions
+            if !pos.x.is_finite() || !pos.y.is_finite() {
+                log::warn!("Skipping agent with non-finite position: ({}, {})", pos.x, pos.y);
+                continue;
+            }
+
             // Position already includes lateral offset (applied in tick).
             // Color-code by car-following model:
             //   IDM: original colors (green/blue)

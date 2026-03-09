@@ -18,6 +18,7 @@ pub mod sim;
 pub mod sim_startup;
 pub mod cpu_reference;
 mod sim_helpers;
+mod sim_junction;
 mod sim_mobil;
 mod sim_lifecycle;
 mod sim_render;

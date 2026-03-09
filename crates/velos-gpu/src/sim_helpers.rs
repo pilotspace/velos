@@ -8,8 +8,8 @@ use petgraph::visit::EdgeRef;
 use petgraph::Direction;
 
 use velos_core::components::{
-    CarFollowingModel, Kinematics, LaneChangeState, LateralOffset, Position, RoadPosition, Route,
-    VehicleType, WaitState,
+    CarFollowingModel, JunctionTraversal, Kinematics, LaneChangeState, LateralOffset, Position,
+    RoadPosition, Route, VehicleType, WaitState,
 };
 use velos_meso::queue_model::MesoVehicle;
 use velos_meso::zone_config::ZoneType;
@@ -89,6 +89,10 @@ impl SimWorld {
     }
 
     /// Shared update logic: apply new offset, handle edge transitions, update state.
+    ///
+    /// Bug 2 fix: After advance_to_next_edge, if the agent entered a junction
+    /// (has JunctionTraversal), do NOT call update_agent_state (it overwrites
+    /// the Bezier position with stale edge coordinates).
     pub(crate) fn apply_vehicle_update(
         &mut self,
         entity: Entity,
@@ -118,9 +122,23 @@ impl SimWorld {
                 self.update_agent_state(entity, 0.0);
                 self.update_wait_state(entity, 0.0, true);
             } else {
-                self.advance_to_next_edge(entity, new_offset - edge_length);
-                self.update_agent_state(entity, v_new);
-                self.update_wait_state(entity, v_new, false);
+                let blocked = self.advance_to_next_edge(entity, new_offset - edge_length);
+                if blocked {
+                    // Bug 3: agent blocked at junction entry -- speed already zeroed
+                    self.update_agent_state(entity, 0.0);
+                    self.update_wait_state(entity, 0.0, false);
+                } else if self
+                    .world
+                    .query_one_mut::<&JunctionTraversal>(entity)
+                    .is_ok()
+                {
+                    // Bug 2 fix: Agent entered junction -- Position already set to Bezier(t=0)
+                    // Do NOT call update_agent_state (it overwrites with stale edge coords)
+                    self.update_wait_state(entity, v_new, false);
+                } else {
+                    self.update_agent_state(entity, v_new);
+                    self.update_wait_state(entity, v_new, false);
+                }
             }
         } else {
             let rp = self.world.query_one_mut::<&mut RoadPosition>(entity).unwrap();
@@ -130,7 +148,14 @@ impl SimWorld {
         }
     }
 
-    pub(crate) fn advance_to_next_edge(&mut self, entity: Entity, overflow: f64) {
+    /// Advance an agent to the next edge in its route, or enter junction traversal.
+    ///
+    /// Returns `true` if the agent is blocked (gap acceptance failed at junction entry).
+    /// When blocked, the agent's speed is zeroed and offset clamped to edge end (Bug 3 fix).
+    ///
+    /// When entering a junction, attaches `JunctionTraversal` and immediately sets
+    /// the agent's Position to Bezier(t=0) to prevent one-frame stale position (Bug 1 fix).
+    pub(crate) fn advance_to_next_edge(&mut self, entity: Entity, overflow: f64) -> bool {
         let next_info = {
             let (route, _rp) = self
                 .world
@@ -146,20 +171,129 @@ impl SimWorld {
                     .inner()
                     .find_edge(from, to)
                     .map(|e| e.index() as u32);
-                Some((edge, route.current_step + 1))
+                // The target node is the one the agent is arriving at
+                let target_node_u32 = route.path[route.current_step + 1];
+                Some((edge, route.current_step + 1, target_node_u32))
             }
         };
 
         match next_info {
-            Some((Some(next_edge_id), new_step)) => {
+            Some((Some(next_edge_id), new_step, target_node_u32)) => {
                 // Check for micro-to-meso transition.
                 if self.meso_enabled
                     && self.zone_config.zone_type(next_edge_id) == ZoneType::Meso
                 {
                     self.enter_meso_zone(entity, next_edge_id, new_step);
-                    return;
+                    return false;
                 }
 
+                // Check for junction traversal intercept
+                if let Some(junction_data) = self.junction_data.get(&target_node_u32) {
+                    // Get current edge to find the matching turn
+                    let current_edge_id = {
+                        let rp = self.world.query_one_mut::<&RoadPosition>(entity).unwrap();
+                        rp.edge_index
+                    };
+
+                    // Find the BezierTurn matching (current_edge -> next_edge)
+                    let turn_match = junction_data
+                        .turns
+                        .iter()
+                        .enumerate()
+                        .find(|(_, t)| t.entry_edge == current_edge_id && t.exit_edge == next_edge_id);
+
+                    if let Some((turn_index, turn)) = turn_match {
+                        // Approach-phase gap acceptance: check if foe agents in junction
+                        // would block entry. Uses simplified TTC check.
+                        let entry_blocked = self.junction_entry_blocked(
+                            entity,
+                            target_node_u32,
+                            turn_index as u16,
+                            junction_data,
+                        );
+
+                        if entry_blocked {
+                            // Bug 3 fix: zero speed and clamp offset
+                            let edge_length = {
+                                let rp = self.world.query_one_mut::<&RoadPosition>(entity).unwrap();
+                                let edge_idx = EdgeIndex::new(rp.edge_index as usize);
+                                self.road_graph
+                                    .inner()
+                                    .edge_weight(edge_idx)
+                                    .map(|e| e.length_m)
+                                    .unwrap_or(100.0)
+                            };
+
+                            let (rp, kin) = self
+                                .world
+                                .query_one_mut::<(&mut RoadPosition, &mut Kinematics)>(entity)
+                                .unwrap();
+                            rp.offset_m = edge_length - 0.1;
+                            kin.speed = 0.0;
+                            kin.vx = 0.0;
+                            kin.vy = 0.0;
+                            return true; // blocked
+                        }
+
+                        // Enter junction traversal
+                        let lateral_offset = self
+                            .world
+                            .query_one_mut::<&LateralOffset>(entity)
+                            .map(|lo| lo.lateral_offset)
+                            .unwrap_or(0.0);
+
+                        let speed = self
+                            .world
+                            .query_one_mut::<&Kinematics>(entity)
+                            .map(|k| k.speed)
+                            .unwrap_or(0.0);
+
+                        // Attach JunctionTraversal component
+                        let _ = self.world.insert_one(
+                            entity,
+                            JunctionTraversal {
+                                junction_node: target_node_u32,
+                                turn_index: turn_index as u16,
+                                t: 0.0,
+                                lateral_offset,
+                                speed,
+                                wait_ticks: 0,
+                            },
+                        );
+
+                        // Bug 1 fix: IMMEDIATELY set Position to Bezier(t=0)
+                        // This prevents one-frame stale position at edge-end coordinates.
+                        let entry_edge_idx = EdgeIndex::new(turn.entry_edge as usize);
+                        let road_half_width = self
+                            .road_graph
+                            .inner()
+                            .edge_weight(entry_edge_idx)
+                            .map(|e| e.lane_count as f64 * 3.5 / 2.0)
+                            .unwrap_or(3.5);
+
+                        let pos = turn.offset_position(0.0, lateral_offset, road_half_width);
+                        let tan = turn.tangent(0.0);
+                        let heading = tan[1].atan2(tan[0]);
+
+                        if let Ok((position, kin)) = self
+                            .world
+                            .query_one_mut::<(&mut Position, &mut Kinematics)>(entity)
+                        {
+                            position.x = pos[0];
+                            position.y = pos[1];
+                            kin.heading = heading;
+                            kin.vx = speed * heading.cos();
+                            kin.vy = speed * heading.sin();
+                        }
+
+                        // Cancel any in-progress lane change
+                        let _ = self.world.remove::<(LaneChangeState,)>(entity);
+
+                        return false; // entered junction successfully
+                    }
+                }
+
+                // No junction data or no matching turn -- proceed with instant transition
                 let (route, rp) = self
                     .world
                     .query_one_mut::<(&mut Route, &mut RoadPosition)>(entity)
@@ -171,12 +305,59 @@ impl SimWorld {
                 // Cancel any in-progress car lane change on edge transition.
                 // Only remove LaneChangeState (not LateralOffset -- motorbikes keep theirs).
                 let _ = self.world.remove::<(LaneChangeState,)>(entity);
+                false
             }
             _ => {
                 let route = self.world.query_one_mut::<&mut Route>(entity).unwrap();
                 route.current_step = route.path.len();
+                false
             }
         }
+    }
+
+    /// Check if entering a junction is blocked by foe agents already inside.
+    ///
+    /// Simplified approach-phase check: if any foe agent is in the same junction
+    /// on a crossing turn and near the conflict point, block entry.
+    fn junction_entry_blocked(
+        &self,
+        _entity: Entity,
+        junction_node: u32,
+        own_turn_idx: u16,
+        junction_data: &velos_net::junction::JunctionData,
+    ) -> bool {
+        // Check each conflict involving our turn
+        for cp in &junction_data.conflicts {
+            let foe_turn_idx = if cp.turn_a_idx == own_turn_idx {
+                cp.turn_b_idx
+            } else if cp.turn_b_idx == own_turn_idx {
+                cp.turn_a_idx
+            } else {
+                continue;
+            };
+
+            let foe_cross_t = if cp.turn_a_idx == own_turn_idx {
+                cp.t_b as f64
+            } else {
+                cp.t_a as f64
+            };
+
+            // Check if any foe agent is in the junction on the crossing turn
+            // and near the conflict point (approach-phase gap acceptance)
+            for (jt,) in self.world.query::<(&JunctionTraversal,)>().iter() {
+                if jt.junction_node != junction_node || jt.turn_index != foe_turn_idx {
+                    continue;
+                }
+                // Foe is on the crossing turn -- check if near conflict point
+                let foe_dist_to_cross = (jt.t - foe_cross_t).abs();
+                if foe_dist_to_cross < 0.3 {
+                    // Foe is near the conflict point -- block entry
+                    return true;
+                }
+            }
+        }
+
+        false
     }
 
     pub(crate) fn update_agent_state(&mut self, entity: Entity, new_speed: f64) {
