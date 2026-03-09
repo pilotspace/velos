@@ -7,8 +7,8 @@
 use hecs::Entity;
 
 use velos_core::components::{
-    CarFollowingModel, GpuAgentState, JunctionTraversal, LateralOffset, Position, RoadPosition,
-    VehicleType,
+    CarFollowingModel, GpuAgentState, JunctionTraversal, JustExitedJunction, LateralOffset,
+    Position, RoadPosition, VehicleType,
 };
 use velos_core::cost::AgentProfile;
 use velos_core::fixed_point::{FixLat, FixPos, FixSpd};
@@ -29,6 +29,15 @@ impl SimWorld {
         let mut gpu_agents: Vec<GpuAgentState> = Vec::new();
         let mut entity_map: Vec<Entity> = Vec::new();
         let mut emergency_list: Vec<GpuEmergencyVehicle> = Vec::new();
+
+        // Collect agents that just exited a junction this frame — skip them
+        // to prevent single-frame teleport to the next junction.
+        let just_exited: std::collections::HashSet<Entity> = self
+            .world
+            .query_mut::<(Entity, &JustExitedJunction)>()
+            .into_iter()
+            .map(|(e, _)| e)
+            .collect();
 
         for (entity, rp, kin, vtype, lat, cf_model, bus_state, pos, agent_profile, jt) in self
             .world
@@ -51,6 +60,11 @@ impl SimWorld {
             }
             // Bug 6 fix: skip junction-traversing agents from edge-based physics
             if jt.is_some() {
+                continue;
+            }
+            // Skip agents that just exited a junction this frame to prevent
+            // single-frame teleport (step_vehicles overshoots exit edge → enters next junction).
+            if just_exited.contains(&entity) {
                 continue;
             }
 

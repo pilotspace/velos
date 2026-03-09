@@ -8,8 +8,8 @@ use std::collections::HashMap;
 use hecs::Entity;
 
 use velos_core::components::{
-    JunctionTraversal, Kinematics, LaneChangeState, LateralOffset, Position, RoadPosition,
-    VehicleType,
+    JunctionTraversal, JustExitedJunction, Kinematics, LaneChangeState, LateralOffset, Position,
+    RoadPosition, VehicleType,
 };
 use velos_net::SpatialIndex;
 use velos_vehicle::idm::{idm_acceleration, integrate_with_stopping_guard, IdmParams};
@@ -26,6 +26,14 @@ pub fn step_vehicles(
     snapshot: &AgentSnapshot,
 ) {
     use crate::sim_mobil::CarMobilContext;
+    use std::collections::HashSet;
+
+    let just_exited: HashSet<Entity> = sim
+        .world
+        .query_mut::<(Entity, &JustExitedJunction)>()
+        .into_iter()
+        .map(|(e, _)| e)
+        .collect();
 
     struct CarSnap {
         entity: Entity,
@@ -51,7 +59,9 @@ pub fn step_vehicles(
         )>()
         .into_iter()
         // Bug 6 fix: skip junction-traversing agents from edge-based physics
-        .filter(|(_, _, _, _, vt, _, _, jt)| **vt == VehicleType::Car && jt.is_none())
+        .filter(|(e, _, _, _, vt, _, _, jt)| {
+            **vt == VehicleType::Car && jt.is_none() && !just_exited.contains(e)
+        })
         .map(|(e, rp, kin, idm, _, pos, lcs, _)| CarSnap {
             entity: e,
             rp: *rp,
@@ -182,6 +192,14 @@ pub fn step_motorbikes_sublane(
     snapshot: &AgentSnapshot,
 ) {
     use petgraph::graph::EdgeIndex;
+    use std::collections::HashSet;
+
+    let just_exited: HashSet<Entity> = sim
+        .world
+        .query_mut::<(Entity, &JustExitedJunction)>()
+        .into_iter()
+        .map(|(e, _)| e)
+        .collect();
 
     struct BikeState {
         entity: Entity,
@@ -207,7 +225,9 @@ pub fn step_motorbikes_sublane(
         )>()
         .into_iter()
         // Bug 6 fix: skip junction-traversing agents from edge-based physics
-        .filter(|(_, _, _, _, _, vt, _, jt)| **vt == VehicleType::Motorbike && jt.is_none())
+        .filter(|(e, _, _, _, _, vt, _, jt)| {
+            **vt == VehicleType::Motorbike && jt.is_none() && !just_exited.contains(e)
+        })
         .map(|(e, rp, kin, idm, lat, _, pos, _)| BikeState {
             entity: e,
             rp: *rp,

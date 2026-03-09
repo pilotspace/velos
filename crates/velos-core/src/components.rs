@@ -147,6 +147,15 @@ pub struct JunctionTraversal {
     pub wait_ticks: u16,
 }
 
+/// Marker: agent just exited a junction this frame.
+///
+/// Prevents `step_vehicles_gpu` from processing the agent in the same frame
+/// it exited a junction — otherwise the vehicle step can overshoot the exit
+/// edge and enter the next junction, causing a single-frame teleport.
+/// Removed at the start of the next `step_junction_traversal`.
+#[derive(Debug, Clone, Copy)]
+pub struct JustExitedJunction;
+
 /// GPU-side agent state packed for compute shader buffers.
 ///
 /// All position and speed fields use fixed-point integer representation

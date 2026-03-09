@@ -8,7 +8,7 @@ use hecs::Entity;
 use petgraph::graph::{EdgeIndex, NodeIndex};
 
 use velos_core::components::{
-    JunctionTraversal, Kinematics, Position, RoadPosition, Route,
+    JunctionTraversal, JustExitedJunction, Kinematics, Position, RoadPosition, Route,
     VehicleType as CoreVehicleType, MAX_YIELD_TICKS,
 };
 use velos_net::junction::BezierTurn;
@@ -45,6 +45,18 @@ impl SimWorld {
     /// 5. Handle junction exit when t >= 1.0 (Bug 4 fix: direct edge placement)
     /// 6. Track wait_ticks for deadlock prevention (Bug 5 fix)
     pub(crate) fn step_junction_traversal(&mut self, dt: f64) {
+        // Phase 0: Clear JustExitedJunction markers from previous frame so
+        // those agents can be processed by step_vehicles_gpu this frame.
+        let exited: Vec<Entity> = self
+            .world
+            .query_mut::<(Entity, &JustExitedJunction)>()
+            .into_iter()
+            .map(|(e, _)| e)
+            .collect();
+        for e in exited {
+            let _ = self.world.remove_one::<JustExitedJunction>(e);
+        }
+
         // Phase 1: Collect all junction-traversing agents grouped by junction node
         // to enable conflict detection within each junction.
         struct AgentState {
@@ -374,7 +386,10 @@ impl SimWorld {
                 None => {
                     // No chaining possible — normal exit to edge.
                     // Apply remaining overflow as additional offset on the exit edge.
+                    // Mark agent so step_vehicles_gpu skips it this frame,
+                    // preventing single-frame teleport to the next junction.
                     let _ = self.world.remove_one::<JunctionTraversal>(entity);
+                    let _ = self.world.insert_one(entity, JustExitedJunction);
 
                     if let Ok(rp) = self.world.query_one_mut::<&mut RoadPosition>(entity) {
                         rp.edge_index = exit_edge_id;
@@ -389,7 +404,9 @@ impl SimWorld {
             }
         }
 
-        // Exhausted chain depth — force normal exit with remaining overflow
+        // Exhausted chain depth — force normal exit with remaining overflow.
+        // Also mark so step_vehicles_gpu skips this frame.
+        let _ = self.world.insert_one(entity, JustExitedJunction);
         let exit_info = {
             let Ok(jt) = self.world.query_one_mut::<&JunctionTraversal>(entity) else {
                 return;
