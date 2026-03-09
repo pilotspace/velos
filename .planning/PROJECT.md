@@ -42,7 +42,18 @@ Motorbikes move realistically through traffic using continuous sublane positioni
 
 ### Active
 
-(None -- next milestone requirements to be defined via `/gsd:new-milestone`)
+## Current Milestone: v1.2 Digital Twin
+
+**Goal:** Complete the digital twin loop with real-world camera integration for demand calibration and 3D native city visualization with agent rendering.
+
+**Target features:**
+- Camera feed ingestion with vehicle/pedestrian detection (YOLO-based)
+- Spatial mapping of camera detection points to simulation network
+- Real-time demand calibration from detection counts
+- 3D city buildings from open data (OSM → glTF) in wgpu renderer
+- 3D terrain rendering (DEM data)
+- 3D agent objects (vehicles, pedestrians) on the city map
+- Self-hosted tile pipeline (no commercial APIs)
 
 ### Out of Scope
 
@@ -108,4 +119,4 @@ Known tech debt: sublane.rs CREEP/GAP constants could be wired to config (values
 | Motorbike sublane: probe-based gap scanning | 0.3m step, obstacle-edge sweep for swarming | Good |
 
 ---
-*Last updated: 2026-03-09 after v1.1 milestone*
+*Last updated: 2026-03-09 after v1.2 milestone start*

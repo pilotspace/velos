@@ -1,17 +1,17 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.1
-milestone_name: SUMO Replacement Engine
-status: completed
-stopped_at: Milestone v1.1 archived
+milestone: v1.2
+milestone_name: Digital Twin
+status: active
+stopped_at: Defining requirements
 last_updated: "2026-03-09T00:00:00.000Z"
-last_activity: "2026-03-09 -- v1.1 milestone archived and completed"
+last_activity: "2026-03-09 -- Milestone v1.2 started"
 progress:
-  total_phases: 11
-  completed_phases: 11
-  total_plans: 39
-  completed_plans: 39
-  percent: 100
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-09)
 
 **Core value:** Motorbikes move realistically through traffic using continuous sublane positioning -- not forced into discrete lanes like Western traffic models
-**Current focus:** Planning next milestone
+**Current focus:** v1.2 Digital Twin — Camera integration + 3D visualization
 
 ## Current Position
 
-Milestone v1.1 SUMO Replacement Engine shipped.
-All 15 phases (5-15) complete, 39 plans executed, 45/45 requirements satisfied.
-
-Next step: `/gsd:new-milestone` to define v1.2 or v2.0 scope.
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-03-09 — Milestone v1.2 started
 
 ## Accumulated Context
 
@@ -47,4 +47,4 @@ None.
 ## Session Continuity
 
 Last session: 2026-03-09
-Stopped at: Milestone v1.1 archived
+Stopped at: Defining requirements for v1.2
