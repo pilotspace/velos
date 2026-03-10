@@ -49,3 +49,4 @@ pub use map_tiles::{MapTileRenderer, TileVertex};
 pub use renderer::{AgentInstance, Renderer};
 pub use orbit_camera::{OrbitCamera, ViewMode, ViewTransition, MeshInstance3D, BillboardInstance3D};
 pub use renderer3d::Renderer3D;
+pub use road_surface::{RoadSurfaceVertex, JunctionData, generate_road_mesh, generate_lane_markings, generate_junction_surfaces};
