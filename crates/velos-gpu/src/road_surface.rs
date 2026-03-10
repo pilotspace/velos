@@ -318,7 +318,7 @@ pub fn generate_junction_surfaces(
 ) -> Vec<RoadSurfaceVertex> {
     let mut vertices = Vec::new();
 
-    for (_id, jdata) in junction_data {
+    for jdata in junction_data.values() {
         let pts = &jdata.boundary_points;
         if pts.len() < 3 {
             continue;

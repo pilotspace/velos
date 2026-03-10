@@ -1,18 +1,26 @@
-//! Renderer3D: 3D rendering scaffold with depth buffer and ground plane.
+//! Renderer3D: 3D rendering with depth buffer, ground plane, and road surfaces.
 //!
 //! This renderer is independent of the existing 2D `Renderer`. It manages its
-//! own depth texture, camera uniform buffer, and render pipelines for 3D content.
+//! own depth texture, camera uniform buffer, and render pipelines for 3D content
+//! (ground plane, road surfaces, lane markings, junction fills).
 //!
-//! Plans 02-04 extend this with mesh instancing, billboard rendering, and
-//! view mode toggle wiring.
+//! Plans 03-04 extend this with mesh instancing, billboard rendering, lighting,
+//! and view mode toggle wiring.
+
+use std::collections::HashMap;
 
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 
 use crate::orbit_camera::{create_depth_texture, OrbitCamera};
+use crate::road_surface::{
+    generate_junction_surfaces, generate_lane_markings, generate_road_mesh,
+    JunctionData, RoadSurfaceVertex,
+};
+use velos_net::RoadGraph;
 
 /// Camera uniform buffer layout for 3D rendering.
-/// Must match WGSL CameraUniform struct in ground_plane.wgsl.
+/// Must match WGSL CameraUniform struct in ground_plane.wgsl and road_surface.wgsl.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 struct CameraUniform3D {
@@ -54,10 +62,11 @@ fn ground_plane_vertices() -> [GroundPlaneVertex; 6] {
     ]
 }
 
-/// 3D renderer scaffold with depth buffer and ground plane.
+/// 3D renderer with depth buffer, ground plane, and road surface rendering.
 ///
-/// Owns the depth texture, camera uniform buffer, and ground plane pipeline.
-/// Extended by subsequent plans with mesh and billboard pipelines.
+/// Owns the depth texture, camera uniform buffer, ground plane pipeline, and
+/// road surface pipeline with vertex buffers for roads, markings, and junctions.
+/// Extended by Plans 03-04 with mesh instancing, billboard rendering, and lighting.
 pub struct Renderer3D {
     depth_texture_view: wgpu::TextureView,
     camera_uniform_buffer: wgpu::Buffer,
@@ -67,6 +76,14 @@ pub struct Renderer3D {
     ground_plane_vertex_buffer: wgpu::Buffer,
     ground_plane_vertex_count: u32,
     surface_format: wgpu::TextureFormat,
+    // Road surface geometry (Plan 02)
+    road_pipeline: wgpu::RenderPipeline,
+    road_vertex_buffer: Option<wgpu::Buffer>,
+    road_vertex_count: u32,
+    marking_vertex_buffer: Option<wgpu::Buffer>,
+    marking_vertex_count: u32,
+    junction_vertex_buffer: Option<wgpu::Buffer>,
+    junction_vertex_count: u32,
 }
 
 impl Renderer3D {
@@ -189,6 +206,73 @@ impl Renderer3D {
                 usage: wgpu::BufferUsages::VERTEX,
             });
 
+        // Road surface pipeline (same vertex layout and camera bind group as ground plane)
+        let road_shader =
+            device.create_shader_module(wgpu::include_wgsl!("../shaders/road_surface.wgsl"));
+
+        let road_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("road_surface_pipeline_layout"),
+                bind_group_layouts: &[&camera_bind_group_layout],
+                push_constant_ranges: &[],
+            });
+
+        let road_vertex_layout = wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<RoadSurfaceVertex>() as u64,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &[
+                wgpu::VertexAttribute {
+                    offset: 0,
+                    shader_location: 0,
+                    format: wgpu::VertexFormat::Float32x3,
+                },
+                wgpu::VertexAttribute {
+                    offset: 12,
+                    shader_location: 1,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+            ],
+        };
+
+        let road_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("road_surface_pipeline"),
+                layout: Some(&road_pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &road_shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[road_vertex_layout],
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &road_shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: surface_format,
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: Default::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    strip_index_format: None,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: wgpu::TextureFormat::Depth32Float,
+                    depth_write_enabled: true,
+                    depth_compare: wgpu::CompareFunction::Less,
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+                cache: None,
+            });
+
         Self {
             depth_texture_view,
             camera_uniform_buffer,
@@ -198,6 +282,13 @@ impl Renderer3D {
             ground_plane_vertex_buffer,
             ground_plane_vertex_count: vertices.len() as u32,
             surface_format,
+            road_pipeline,
+            road_vertex_buffer: None,
+            road_vertex_count: 0,
+            marking_vertex_buffer: None,
+            marking_vertex_count: 0,
+            junction_vertex_buffer: None,
+            junction_vertex_count: 0,
         }
     }
 
@@ -261,15 +352,126 @@ impl Renderer3D {
         pass.draw(0..self.ground_plane_vertex_count, 0..1);
     }
 
-    /// Render a full 3D frame. Currently renders ground plane only.
+    /// Upload road geometry (surfaces, markings, junctions) from a RoadGraph.
     ///
-    /// Extended by Plans 02 and 03 with mesh instances and billboards.
+    /// Generates all road mesh data and uploads to static GPU vertex buffers.
+    /// This should be called once at load time; the buffers are rendered every frame.
+    pub fn upload_road_geometry(
+        &mut self,
+        device: &wgpu::Device,
+        graph: &RoadGraph,
+        junction_data: &HashMap<u32, JunctionData>,
+    ) {
+        // Road surfaces
+        let road_verts = generate_road_mesh(graph);
+        if !road_verts.is_empty() {
+            self.road_vertex_buffer =
+                Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("road_surface_vertices"),
+                    contents: bytemuck::cast_slice(&road_verts),
+                    usage: wgpu::BufferUsages::VERTEX,
+                }));
+            self.road_vertex_count = road_verts.len() as u32;
+        }
+
+        // Lane markings
+        let marking_verts = generate_lane_markings(graph);
+        if !marking_verts.is_empty() {
+            self.marking_vertex_buffer =
+                Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("lane_marking_vertices"),
+                    contents: bytemuck::cast_slice(&marking_verts),
+                    usage: wgpu::BufferUsages::VERTEX,
+                }));
+            self.marking_vertex_count = marking_verts.len() as u32;
+        }
+
+        // Junction surfaces
+        let junction_verts = generate_junction_surfaces(junction_data);
+        if !junction_verts.is_empty() {
+            self.junction_vertex_buffer =
+                Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("junction_surface_vertices"),
+                    contents: bytemuck::cast_slice(&junction_verts),
+                    usage: wgpu::BufferUsages::VERTEX,
+                }));
+            self.junction_vertex_count = junction_verts.len() as u32;
+        }
+
+        log::info!(
+            "Uploaded road geometry: {} road verts, {} marking verts, {} junction verts",
+            self.road_vertex_count,
+            self.marking_vertex_count,
+            self.junction_vertex_count,
+        );
+    }
+
+    /// Render road surfaces, junction fills, and lane markings.
+    ///
+    /// Draw order (back to front via Y offsets):
+    /// 1. Road surfaces (y=0.0)
+    /// 2. Junction surfaces (y=0.005)
+    /// 3. Lane markings (y=0.01)
+    fn render_roads(&self, pass: &mut wgpu::RenderPass<'_>) {
+        pass.set_pipeline(&self.road_pipeline);
+        pass.set_bind_group(0, &self.camera_bind_group, &[]);
+
+        // Road surfaces
+        if let Some(ref buf) = self.road_vertex_buffer {
+            pass.set_vertex_buffer(0, buf.slice(..));
+            pass.draw(0..self.road_vertex_count, 0..1);
+        }
+
+        // Junction surfaces
+        if let Some(ref buf) = self.junction_vertex_buffer {
+            pass.set_vertex_buffer(0, buf.slice(..));
+            pass.draw(0..self.junction_vertex_count, 0..1);
+        }
+
+        // Lane markings (on top)
+        if let Some(ref buf) = self.marking_vertex_buffer {
+            pass.set_vertex_buffer(0, buf.slice(..));
+            pass.draw(0..self.marking_vertex_count, 0..1);
+        }
+    }
+
+    /// Render a full 3D frame: ground plane, road surfaces, markings, junctions.
+    ///
+    /// Extended by Plans 03 and 04 with mesh instances and billboards.
     pub fn render_frame(
         &self,
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
     ) {
+        // Ground plane clears color + depth
         self.render_ground(encoder, view);
+
+        // Road geometry in a second pass (loads existing color/depth)
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("road_surface_pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view,
+                    resolve_target: None,
+                    depth_slice: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.depth_texture_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                ..Default::default()
+            });
+
+            self.render_roads(&mut pass);
+        }
     }
 
     /// Returns the camera bind group layout for other 3D pipelines to reuse.
@@ -336,5 +538,23 @@ mod tests {
             28,
             "GroundPlaneVertex should be 28 bytes"
         );
+    }
+
+    #[test]
+    fn test_road_surface_wgsl_naga_validates() {
+        let source = include_str!("../shaders/road_surface.wgsl");
+        let result = naga::front::wgsl::parse_str(source);
+        match result {
+            Ok(module) => {
+                let mut validator = naga::valid::Validator::new(
+                    naga::valid::ValidationFlags::all(),
+                    naga::valid::Capabilities::empty(),
+                );
+                validator
+                    .validate(&module)
+                    .expect("road_surface.wgsl validation failed");
+            }
+            Err(e) => panic!("road_surface.wgsl parse failed: {e}"),
+        }
     }
 }
