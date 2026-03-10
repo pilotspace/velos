@@ -35,10 +35,10 @@ Requirements for Digital Twin milestone. Each maps to roadmap phases.
 
 ### 3D Rendering
 
-- [ ] **R3D-01**: User can view simulation in 3D perspective with depth-correct rendering
+- [x] **R3D-01**: User can view simulation in 3D perspective with depth-correct rendering
 - [ ] **R3D-02**: Roads render as 3D surface polygons with lane markings
 - [ ] **R3D-03**: Agents render as 3D meshes (close), billboards (mid-range), dots (far) with GPU instancing per LOD tier
-- [ ] **R3D-04**: User can toggle between 2D top-down and 3D perspective views
+- [x] **R3D-04**: User can toggle between 2D top-down and 3D perspective views
 - [ ] **R3D-05**: Scene lighting follows simulation time-of-day (day/night cycle with directional sun + ambient)
 - [ ] **R3D-06**: OSM building footprints render as extruded 3D buildings with height from building:levels tag
 - [ ] **R3D-07**: Terrain renders from SRTM DEM heightmap data as ground surface mesh
@@ -95,10 +95,10 @@ Deferred to future release. Tracked but not in current roadmap.
 | DET-06 | Phase 17 | Complete |
 | CAL-01 | Phase 17 | Complete |
 | CAL-02 | Phase 20 | Pending |
-| R3D-01 | Phase 18 | Pending |
+| R3D-01 | Phase 18 | Complete |
 | R3D-02 | Phase 18 | Pending |
 | R3D-03 | Phase 18 | Pending |
-| R3D-04 | Phase 18 | Pending |
+| R3D-04 | Phase 18 | Complete |
 | R3D-05 | Phase 18 | Pending |
 | R3D-06 | Phase 19 | Pending |
 | R3D-07 | Phase 19 | Pending |

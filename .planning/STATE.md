@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Digital Twin
-status: completed
-stopped_at: Phase 18 context gathered
-last_updated: "2026-03-10T15:31:14.471Z"
-last_activity: 2026-03-10 -- Phase 17 Plan 04 complete (Camera FOV overlay, client SDKs, visual verification)
+status: in_progress
+stopped_at: Completed 18-01-PLAN.md
+last_updated: "2026-03-10T15:58:35Z"
+last_activity: 2026-03-10 -- Phase 18 Plan 01 complete (OrbitCamera, Renderer3D scaffold, ground plane)
 progress:
   total_phases: 5
   completed_phases: 2
-  total_plans: 8
-  completed_plans: 8
-  percent: 100
+  total_plans: 12
+  completed_plans: 9
+  percent: 75
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-09)
 
 **Core value:** Motorbikes move realistically through traffic using continuous sublane positioning -- not forced into discrete lanes like Western traffic models
-**Current focus:** Phase 17 complete -- ready for Phase 18 (3D Rendering Core) or Phase 20 (Real-Time Calibration)
+**Current focus:** Phase 18 in progress -- 3D Rendering Core (OrbitCamera, Renderer3D, mesh/billboard instancing, view toggle)
 
 ## Current Position
 
-Phase: 17 of 20 (Detection Ingestion & Demand Calibration) -- COMPLETE
-Plan: 4 of 4 in current phase (complete)
-Status: Phase 17 Complete
-Last activity: 2026-03-10 -- Phase 17 Plan 04 complete (Camera FOV overlay, client SDKs, visual verification)
+Phase: 18 of 20 (3D Rendering Core) -- IN PROGRESS
+Plan: 1 of 4 in current phase (complete)
+Status: Plan 01 complete, ready for Plan 02
+Last activity: 2026-03-10 -- Phase 18 Plan 01 complete (OrbitCamera, Renderer3D scaffold, ground plane)
 
-Progress: [██████████] 100% (Phase 17)
+Progress: [███░░░░░░░] 25% (Phase 18)
 
 ## Accumulated Context
 
@@ -39,6 +39,10 @@ Progress: [██████████] 100% (Phase 17)
 Decisions are logged in PROJECT.md Key Decisions table.
 Recent decisions affecting current work:
 
+- [18-01]: Renderer3D fully independent of existing 2D Renderer (no shared state)
+- [18-01]: Camera bind group layout uses VERTEX|FRAGMENT visibility for future lighting
+- [18-01]: Ground plane at y=-0.01 to prevent z-fighting with road surfaces at y=0
+- [18-01]: Pitch clamp enforced through orbit() method; direct field access allowed for flexibility
 - [17-04]: Camera FOV rendered as semi-transparent triangle cone (alpha 0.15 fill, 0.6 outline)
 - [17-04]: RegisterCamera switched to fire-and-forget (no oneshot reply) for simplicity
 - [17-04]: Camera range 40m (reduced from 100m) for realistic urban CCTV
@@ -87,6 +91,6 @@ Recent decisions affecting current work:
 
 ## Session Continuity
 
-Last session: 2026-03-10T15:31:14.469Z
-Stopped at: Phase 18 context gathered
-Resume file: .planning/phases/18-3d-rendering-core/18-CONTEXT.md
+Last session: 2026-03-10T15:58:35Z
+Stopped at: Completed 18-01-PLAN.md
+Resume file: .planning/phases/18-3d-rendering-core/18-02-PLAN.md
