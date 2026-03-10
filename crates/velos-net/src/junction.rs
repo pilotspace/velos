@@ -269,6 +269,53 @@ pub fn find_conflict_point(
 
 // find_closest_t is now a method on BezierTurn — see BezierTurn::find_closest_t.
 
+/// Extract approach direction toward `centroid` from edge geometry.
+/// Uses the last geometry segment (near junction) for the tangent direction,
+/// falling back to straight-line source→centroid if geometry is too short.
+/// Returns the unit direction vector FROM source TOWARD centroid.
+fn approach_direction(geometry: &[[f64; 2]], source_pos: [f64; 2], centroid: [f64; 2]) -> [f64; 2] {
+    // For incoming edges, geometry goes source→junction.
+    // Use the last segment for accurate road direction near the junction.
+    if geometry.len() >= 2 {
+        let near = geometry[geometry.len() - 2];
+        let at = geometry[geometry.len() - 1];
+        let dx = at[0] - near[0];
+        let dy = at[1] - near[1];
+        let len = (dx * dx + dy * dy).sqrt();
+        if len > 0.01 {
+            return [dx / len, dy / len];
+        }
+    }
+    // Fallback: straight line
+    let dx = centroid[0] - source_pos[0];
+    let dy = centroid[1] - source_pos[1];
+    let len = (dx * dx + dy * dy).sqrt();
+    if len > 0.01 { [dx / len, dy / len] } else { [1.0, 0.0] }
+}
+
+/// Extract departure direction from `centroid` using edge geometry.
+/// Uses the first geometry segment (near junction) for the tangent direction.
+/// Returns the unit direction vector FROM centroid TOWARD target.
+fn departure_direction(geometry: &[[f64; 2]], target_pos: [f64; 2], centroid: [f64; 2]) -> [f64; 2] {
+    // For outgoing edges, geometry goes junction→target.
+    // Use the first segment for accurate road direction leaving the junction.
+    if geometry.len() >= 2 {
+        let at = geometry[0];
+        let near = geometry[1];
+        let dx = near[0] - at[0];
+        let dy = near[1] - at[1];
+        let len = (dx * dx + dy * dy).sqrt();
+        if len > 0.01 {
+            return [dx / len, dy / len];
+        }
+    }
+    // Fallback: straight line
+    let dx = target_pos[0] - centroid[0];
+    let dy = target_pos[1] - centroid[1];
+    let len = (dx * dx + dy * dy).sqrt();
+    if len > 0.01 { [dx / len, dy / len] } else { [1.0, 0.0] }
+}
+
 /// Precompute all Bezier turns and conflict points for a single junction node.
 ///
 /// Iterates all (incoming, outgoing) edge pairs, skipping U-turns (where the
@@ -295,33 +342,22 @@ pub fn precompute_junction(
             }
             let target_pos = g[out.target()].pos;
 
-            // P0: JUNCTION_RADIUS_M back from junction along incoming approach direction.
-            // This keeps the curve start near where the agent actually is (edge end),
-            // preventing the backward teleport that caused flickering.
-            let approach = [centroid[0] - source_pos[0], centroid[1] - source_pos[1]];
-            let approach_len = (approach[0] * approach[0] + approach[1] * approach[1]).sqrt();
-            let radius0 = JUNCTION_RADIUS_M.min(approach_len * 0.5);
-            let p0 = if approach_len > 0.01 {
-                [
-                    centroid[0] - (approach[0] / approach_len) * radius0,
-                    centroid[1] - (approach[1] / approach_len) * radius0,
-                ]
-            } else {
-                centroid
-            };
+            // Use edge geometry for accurate road direction near the junction.
+            let approach_dir = approach_direction(&inc.weight().geometry, source_pos, centroid);
+            let src_dist = ((centroid[0] - source_pos[0]).powi(2) + (centroid[1] - source_pos[1]).powi(2)).sqrt();
+            let radius0 = JUNCTION_RADIUS_M.min(src_dist * 0.5);
+            let p0 = [
+                centroid[0] - approach_dir[0] * radius0,
+                centroid[1] - approach_dir[1] * radius0,
+            ];
 
-            // P2: JUNCTION_RADIUS_M forward from junction along departure direction.
-            let depart = [target_pos[0] - centroid[0], target_pos[1] - centroid[1]];
-            let depart_len = (depart[0] * depart[0] + depart[1] * depart[1]).sqrt();
-            let radius2 = JUNCTION_RADIUS_M.min(depart_len * 0.5);
-            let p2 = if depart_len > 0.01 {
-                [
-                    centroid[0] + (depart[0] / depart_len) * radius2,
-                    centroid[1] + (depart[1] / depart_len) * radius2,
-                ]
-            } else {
-                centroid
-            };
+            let depart_dir = departure_direction(&out.weight().geometry, target_pos, centroid);
+            let tgt_dist = ((target_pos[0] - centroid[0]).powi(2) + (target_pos[1] - centroid[1]).powi(2)).sqrt();
+            let radius2 = JUNCTION_RADIUS_M.min(tgt_dist * 0.5);
+            let p2 = [
+                centroid[0] + depart_dir[0] * radius2,
+                centroid[1] + depart_dir[1] * radius2,
+            ];
 
             // P1 = junction centroid. The curve passes near (not exactly through)
             // the centroid but stays within the convex hull of P0-centroid-P2,
@@ -525,33 +561,34 @@ fn precompute_merged_junction(
             let source_pos = inc.outer_node_pos;
             let target_pos = out.outer_node_pos;
 
-            // P0: radius back from centroid along incoming approach direction
-            let approach = [centroid[0] - source_pos[0], centroid[1] - source_pos[1]];
-            let approach_len =
-                (approach[0] * approach[0] + approach[1] * approach[1]).sqrt();
-            let radius0 = JUNCTION_RADIUS_M.min(approach_len * 0.5);
-            let p0 = if approach_len > 0.01 {
-                [
-                    centroid[0] - (approach[0] / approach_len) * radius0,
-                    centroid[1] - (approach[1] / approach_len) * radius0,
-                ]
+            // Use inner_node_pos (cluster-side endpoint) for approach direction —
+            // more accurate than outer_node_pos for merged clusters.
+            let approach = [centroid[0] - inc.inner_node_pos[0], centroid[1] - inc.inner_node_pos[1]];
+            let approach_len = (approach[0] * approach[0] + approach[1] * approach[1]).sqrt();
+            // If inner node is too close to centroid, fall back to outer node direction
+            let (a_dir, a_dist) = if approach_len > 0.5 {
+                ([approach[0] / approach_len, approach[1] / approach_len], approach_len)
             } else {
-                centroid
+                let dx = centroid[0] - source_pos[0];
+                let dy = centroid[1] - source_pos[1];
+                let d = (dx * dx + dy * dy).sqrt();
+                if d > 0.01 { ([dx / d, dy / d], d) } else { ([1.0, 0.0], 1.0) }
             };
+            let radius0 = JUNCTION_RADIUS_M.min(a_dist * 0.5);
+            let p0 = [centroid[0] - a_dir[0] * radius0, centroid[1] - a_dir[1] * radius0];
 
-            // P2: radius forward from centroid along departure direction
-            let depart = [target_pos[0] - centroid[0], target_pos[1] - centroid[1]];
-            let depart_len =
-                (depart[0] * depart[0] + depart[1] * depart[1]).sqrt();
-            let radius2 = JUNCTION_RADIUS_M.min(depart_len * 0.5);
-            let p2 = if depart_len > 0.01 {
-                [
-                    centroid[0] + (depart[0] / depart_len) * radius2,
-                    centroid[1] + (depart[1] / depart_len) * radius2,
-                ]
+            let depart = [out.inner_node_pos[0] - centroid[0], out.inner_node_pos[1] - centroid[1]];
+            let depart_len = (depart[0] * depart[0] + depart[1] * depart[1]).sqrt();
+            let (d_dir, d_dist) = if depart_len > 0.5 {
+                ([depart[0] / depart_len, depart[1] / depart_len], depart_len)
             } else {
-                centroid
+                let dx = target_pos[0] - centroid[0];
+                let dy = target_pos[1] - centroid[1];
+                let d = (dx * dx + dy * dy).sqrt();
+                if d > 0.01 { ([dx / d, dy / d], d) } else { ([1.0, 0.0], 1.0) }
             };
+            let radius2 = JUNCTION_RADIUS_M.min(d_dist * 0.5);
+            let p2 = [centroid[0] + d_dir[0] * radius2, centroid[1] + d_dir[1] * radius2];
 
             // P1 = centroid directly, keeping curve on-road.
             let p1 = centroid;
@@ -559,7 +596,7 @@ fn precompute_merged_junction(
             let arc_length = estimate_arc_length(&p0, &p1, &p2, ARC_LENGTH_SAMPLES);
             // For merged clusters, require a higher minimum arc length to
             // eliminate tiny overlapping paths that cause vehicles to get stuck.
-            let min_arc = if cluster.len() > 1 { 5.0 } else { MIN_ARC_LENGTH_M };
+            let min_arc = if cluster.len() > 1 { 2.0 } else { MIN_ARC_LENGTH_M };
             if arc_length < min_arc {
                 continue;
             }
