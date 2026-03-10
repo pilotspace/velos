@@ -271,12 +271,17 @@ impl SimWorld {
                             .map(|k| k.speed)
                             .unwrap_or(0.0);
 
-                        // Compute initial t: start at entry_t (where curve passes
-                        // through junction centroid) plus overflow from edge end.
-                        // Cap advancement beyond entry_t to prevent teleporting
-                        // through the junction when overflow is large.
+                        // Position-continuous entry: find the t on the Bezier
+                        // closest to the vehicle's current position, then advance
+                        // by overflow. This prevents the visible position jump
+                        // that occurred when using a fixed entry_t.
+                        let current_pos = {
+                            let p = self.world.query_one_mut::<&Position>(entity).unwrap();
+                            [p.x, p.y]
+                        };
+                        let base_t = turn.find_closest_t(current_pos, 30);
                         let t_advance = (overflow / turn.arc_length.max(1.0)).min(0.15);
-                        let initial_t = (turn.entry_t + t_advance).min(0.99);
+                        let initial_t = (base_t + t_advance).min(0.99);
 
                         // Attach JunctionTraversal component.
                         // For merged clusters, advance the route past internal

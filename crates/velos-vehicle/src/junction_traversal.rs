@@ -26,9 +26,20 @@ pub struct ConflictPoint {
 /// Maximum allowed deceleration for junction yielding (m/s^2).
 const MAX_JUNCTION_DECEL: f64 = -9.0;
 
-/// Default t-proximity threshold for conflict detection.
-/// ~3m on a 20m curve per RESEARCH.md Pitfall 5.
-pub const DEFAULT_T_PROXIMITY: f64 = 0.15;
+/// Default distance-based proximity for conflict detection (metres).
+/// Agents within this distance of a conflict point trigger yielding.
+/// Replaces fixed t-proximity to prevent over-yielding on short curves.
+pub const DEFAULT_CONFLICT_DISTANCE_M: f64 = 3.0;
+
+/// Compute t-proximity from a distance threshold and arc length.
+/// Ensures the conflict zone never spans more than 30% of the curve,
+/// preventing vehicles from yielding for most of a short junction.
+pub fn t_proximity_from_distance(distance_m: f64, arc_length: f64) -> f64 {
+    let safe_arc = arc_length.max(1.0);
+    let t_from_dist = distance_m / safe_arc;
+    // Cap at 0.10 so the conflict zone (3x) never exceeds 30% of t-range
+    t_from_dist.min(0.10)
+}
 
 /// Minimum crawl speed forced after deadlock timeout (m/s).
 pub const MIN_CRAWL_SPEED: f64 = 1.0;
@@ -44,12 +55,24 @@ pub struct ConflictCheckResult {
 
 /// Advance a Bezier curve parameter `t` forward based on speed and arc length.
 ///
-/// Returns `(new_t, finished)` where `finished` is true when `new_t >= 1.0`.
+/// Returns `(new_t, finished, overflow_m)`:
+/// - `new_t`: clamped to [0, 1]
+/// - `finished`: true when the agent reached or passed t=1.0
+/// - `overflow_m`: distance in metres the agent travelled past the curve end
+///   (used for smooth chaining into the next junction segment)
+///
 /// Uses approximately uniform speed: `dt_param = dt * speed / arc_length`.
-pub fn advance_on_bezier(t: f64, speed: f64, arc_length: f64, dt: f64) -> (f64, bool) {
-    let dt_param = dt * speed / arc_length.max(1.0);
-    let new_t = (t + dt_param).min(1.0);
-    (new_t, new_t >= 1.0)
+pub fn advance_on_bezier(t: f64, speed: f64, arc_length: f64, dt: f64) -> (f64, bool, f64) {
+    let safe_arc = arc_length.max(1.0);
+    let dt_param = dt * speed / safe_arc;
+    let raw_t = t + dt_param;
+    let clamped_t = raw_t.min(1.0);
+    let overflow_m = if raw_t > 1.0 {
+        (raw_t - 1.0) * safe_arc
+    } else {
+        0.0
+    };
+    (clamped_t, clamped_t >= 1.0, overflow_m)
 }
 
 /// Priority ordering for tie-breaking at conflict points.
@@ -192,39 +215,57 @@ mod tests {
     #[test]
     fn advance_basic_proportional() {
         // speed=10, arc_length=20, dt=0.1 -> dt_param = 0.1*10/20 = 0.05
-        let (new_t, finished) = advance_on_bezier(0.0, 10.0, 20.0, 0.1);
+        let (new_t, finished, overflow) = advance_on_bezier(0.0, 10.0, 20.0, 0.1);
         assert!((new_t - 0.05).abs() < 1e-10);
         assert!(!finished);
+        assert!((overflow - 0.0).abs() < 1e-10);
     }
 
     #[test]
     fn advance_clamps_to_one() {
-        let (new_t, finished) = advance_on_bezier(0.95, 10.0, 10.0, 0.1);
-        // dt_param = 0.1*10/10 = 0.1, new_t = 1.05 -> clamped to 1.0
+        let (new_t, finished, overflow) = advance_on_bezier(0.95, 10.0, 10.0, 0.1);
+        // dt_param = 0.1*10/10 = 0.1, raw_t = 1.05 -> clamped to 1.0
+        // overflow = 0.05 * 10.0 = 0.5m
         assert!((new_t - 1.0).abs() < 1e-10);
         assert!(finished);
+        assert!((overflow - 0.5).abs() < 0.01);
     }
 
     #[test]
     fn advance_finished_at_exactly_one() {
-        let (new_t, finished) = advance_on_bezier(0.9, 10.0, 10.0, 0.1);
+        let (new_t, finished, overflow) = advance_on_bezier(0.9, 10.0, 10.0, 0.1);
         assert!((new_t - 1.0).abs() < 1e-10);
         assert!(finished);
+        assert!((overflow - 0.0).abs() < 1e-10);
     }
 
     #[test]
     fn advance_zero_speed_no_movement() {
-        let (new_t, finished) = advance_on_bezier(0.5, 0.0, 20.0, 0.1);
+        let (new_t, finished, overflow) = advance_on_bezier(0.5, 0.0, 20.0, 0.1);
         assert!((new_t - 0.5).abs() < 1e-10);
         assert!(!finished);
+        assert!((overflow - 0.0).abs() < 1e-10);
     }
 
     #[test]
     fn advance_small_arc_length_uses_floor() {
         // arc_length < 1.0 is clamped to 1.0 to avoid division by tiny value
-        let (new_t, _) = advance_on_bezier(0.0, 10.0, 0.5, 0.1);
+        let (new_t, _, _) = advance_on_bezier(0.0, 10.0, 0.5, 0.1);
         // dt_param = 0.1*10/1.0 = 1.0, clamped to 1.0
         assert!((new_t - 1.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn advance_overflow_distance_correct() {
+        // speed=20, arc_length=10, dt=0.1 -> dt_param = 0.2, raw_t = 0.8 + 0.2 = 1.0 (exact)
+        let (_, _, overflow) = advance_on_bezier(0.8, 20.0, 10.0, 0.1);
+        assert!((overflow - 0.0).abs() < 1e-10, "exact finish should have zero overflow");
+
+        // speed=20, arc_length=10, dt=0.2 -> dt_param = 0.4, raw_t = 0.8 + 0.4 = 1.2
+        // overflow = 0.2 * 10.0 = 2.0m
+        let (_, finished, overflow) = advance_on_bezier(0.8, 20.0, 10.0, 0.2);
+        assert!(finished);
+        assert!((overflow - 2.0).abs() < 0.01, "overflow should be 2.0m, got {}", overflow);
     }
 
     // ---- size_factor tests ----

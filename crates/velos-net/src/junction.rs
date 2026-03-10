@@ -30,7 +30,8 @@ const ARC_LENGTH_SAMPLES: usize = 10;
 /// Junction curve radius in metres. P0/P2 are placed this far from the junction
 /// centroid along approach/departure directions, keeping curves short (~2*radius)
 /// so agents don't teleport to the far end of connected edges on junction entry.
-const JUNCTION_RADIUS_M: f64 = 15.0;
+/// Reduced from 15m to 8m to keep Bezier curves tighter and on-road.
+const JUNCTION_RADIUS_M: f64 = 8.0;
 
 /// Maximum distance (metres) between two junction nodes for them to be merged
 /// into a single cluster. Set to `2 * JUNCTION_RADIUS_M` so overlapping Bezier
@@ -93,6 +94,29 @@ impl BezierTurn {
             2.0 * u * (self.p1[0] - self.p0[0]) + 2.0 * t * (self.p2[0] - self.p1[0]),
             2.0 * u * (self.p1[1] - self.p0[1]) + 2.0 * t * (self.p2[1] - self.p1[1]),
         ]
+    }
+
+    /// Find the Bezier t-parameter closest to a target position.
+    ///
+    /// Grid search with `samples` steps. Used to preserve position continuity
+    /// when a vehicle enters or chains into a junction — the initial t matches
+    /// the vehicle's current world position rather than a fixed `entry_t`.
+    pub fn find_closest_t(&self, target: [f64; 2], samples: usize) -> f64 {
+        let mut best_t = 0.0;
+        let mut best_dist_sq = f64::MAX;
+        let inv = 1.0 / samples.max(1) as f64;
+        for i in 0..=samples {
+            let t = i as f64 * inv;
+            let pos = self.position(t);
+            let dx = pos[0] - target[0];
+            let dy = pos[1] - target[1];
+            let dist_sq = dx * dx + dy * dy;
+            if dist_sq < best_dist_sq {
+                best_dist_sq = dist_sq;
+                best_t = t;
+            }
+        }
+        best_t
     }
 
     /// Compute position offset perpendicular to the tangent direction.
@@ -170,10 +194,19 @@ pub fn estimate_arc_length(p0: &[f64; 2], p1: &[f64; 2], p2: &[f64; 2], steps: u
     length
 }
 
+/// Minimum t-parameter distance from curve endpoints for a valid conflict.
+/// Conflicts at t < this or t > 1-this are filtered out because they
+/// represent shared entry/exit geometry, not true crossing points.
+const CONFLICT_ENDPOINT_MARGIN: f64 = 0.08;
+
 /// Find the closest approach between two Bezier turn curves using grid search.
 ///
 /// Returns `Some((t_a, t_b))` if the minimum distance is within
 /// [`CONFLICT_DISTANCE_THRESHOLD_M`], `None` otherwise.
+///
+/// Filters out conflicts at curve endpoints (t < 0.08 or t > 0.92) which
+/// represent shared entry/exit geometry rather than actual crossing points.
+/// Also filters conflicts between turns sharing an entry or exit edge.
 ///
 /// Includes NaN guard: returns `None` if the computed distance is not finite.
 pub fn find_conflict_point(
@@ -181,6 +214,13 @@ pub fn find_conflict_point(
     b: &BezierTurn,
     steps: usize,
 ) -> Option<(f32, f32)> {
+    // Skip turns that share entry or exit edges — they converge/diverge at
+    // endpoints, not cross in the middle. False conflict points here cause
+    // vehicles to yield permanently at junction start/end.
+    if a.entry_edge == b.entry_edge || a.exit_edge == b.exit_edge {
+        return None;
+    }
+
     let mut best_dist_sq = f64::MAX;
     let mut best_ta = 0.0_f64;
     let mut best_tb = 0.0_f64;
@@ -213,33 +253,21 @@ pub fn find_conflict_point(
         return None;
     }
 
-    if best_dist < CONFLICT_DISTANCE_THRESHOLD_M {
-        Some((best_ta as f32, best_tb as f32))
-    } else {
-        None
+    if best_dist >= CONFLICT_DISTANCE_THRESHOLD_M {
+        return None;
     }
+
+    // Filter endpoint conflicts: crossings at curve start/end are shared
+    // geometry (common entry/exit node), not real intersection crossings.
+    let valid_range = CONFLICT_ENDPOINT_MARGIN..=(1.0 - CONFLICT_ENDPOINT_MARGIN);
+    if !valid_range.contains(&best_ta) || !valid_range.contains(&best_tb) {
+        return None;
+    }
+
+    Some((best_ta as f32, best_tb as f32))
 }
 
-/// Find the t-parameter on a Bezier curve closest to a target point.
-///
-/// Uses grid search with `samples` steps. Called once per turn at network load.
-fn find_closest_t(turn: &BezierTurn, target: [f64; 2], samples: usize) -> f64 {
-    let mut best_t = 0.0;
-    let mut best_dist_sq = f64::MAX;
-    let inv = 1.0 / samples.max(1) as f64;
-    for i in 0..=samples {
-        let t = i as f64 * inv;
-        let pos = turn.position(t);
-        let dx = pos[0] - target[0];
-        let dy = pos[1] - target[1];
-        let dist_sq = dx * dx + dy * dy;
-        if dist_sq < best_dist_sq {
-            best_dist_sq = dist_sq;
-            best_t = t;
-        }
-    }
-    best_t
-}
+// find_closest_t is now a method on BezierTurn — see BezierTurn::find_closest_t.
 
 /// Precompute all Bezier turns and conflict points for a single junction node.
 ///
@@ -295,15 +323,12 @@ pub fn precompute_junction(
                 centroid
             };
 
-            // Compute P1 so the quadratic Bezier passes through the junction
-            // centroid at t=0.5.  For B(0.5) = 0.25*P0 + 0.5*P1 + 0.25*P2,
-            // solving for B(0.5) = centroid gives P1 = 2*C - 0.5*(P0+P2).
-            // This eliminates the entry/exit teleport: agents enter from the
-            // edge at the centroid and Bezier(entry_t≈0.5) IS the centroid.
-            let p1 = [
-                2.0 * centroid[0] - 0.5 * (p0[0] + p2[0]),
-                2.0 * centroid[1] - 0.5 * (p0[1] + p2[1]),
-            ];
+            // P1 = junction centroid. The curve passes near (not exactly through)
+            // the centroid but stays within the convex hull of P0-centroid-P2,
+            // keeping it on-road. The old formula P1=2*C-0.5*(P0+P2) forced
+            // B(0.5)=centroid exactly but pushed P1 off-road when P0/P2 were
+            // asymmetric around the centroid.
+            let p1 = centroid;
 
             let arc_length = estimate_arc_length(&p0, &p1, &p2, ARC_LENGTH_SAMPLES);
 
@@ -322,7 +347,7 @@ pub fn precompute_junction(
                 exit_offset_m: radius2.max(0.1),
                 entry_t: 0.0, // placeholder, computed below
             };
-            turn.entry_t = find_closest_t(&turn, centroid, ARC_LENGTH_SAMPLES);
+            turn.entry_t = turn.find_closest_t(centroid, ARC_LENGTH_SAMPLES);
             turns.push(turn);
         }
     }
@@ -528,11 +553,8 @@ fn precompute_merged_junction(
                 centroid
             };
 
-            // P1 so B(0.5) = centroid
-            let p1 = [
-                2.0 * centroid[0] - 0.5 * (p0[0] + p2[0]),
-                2.0 * centroid[1] - 0.5 * (p0[1] + p2[1]),
-            ];
+            // P1 = centroid directly, keeping curve on-road.
+            let p1 = centroid;
 
             let arc_length = estimate_arc_length(&p0, &p1, &p2, ARC_LENGTH_SAMPLES);
             // For merged clusters, require a higher minimum arc length to
@@ -552,7 +574,7 @@ fn precompute_merged_junction(
                 exit_offset_m: radius2.max(0.1),
                 entry_t: 0.0,
             };
-            turn.entry_t = find_closest_t(&turn, centroid, ARC_LENGTH_SAMPLES);
+            turn.entry_t = turn.find_closest_t(centroid, ARC_LENGTH_SAMPLES);
             turns.push(turn);
         }
     }
@@ -952,11 +974,10 @@ mod tests {
     }
 
     #[test]
-    fn conflict_for_same_path_returns_some() {
-        // Two identical curves will have distance 0 everywhere, which is
-        // within the 2m threshold. This is expected -- in practice,
-        // precompute_junction never creates duplicate turns (different
-        // entry/exit pairs), so this case doesn't arise in real usage.
+    fn conflict_for_same_geometry_different_edges_filtered() {
+        // Identical geometry but same entry/exit edges → filtered out by the
+        // shared-edge check (not a real crossing). In practice precompute_junction
+        // never produces duplicate turns.
         let turn = BezierTurn {
             entry_edge: 0,
             exit_edge: 1,
@@ -968,8 +989,35 @@ mod tests {
             entry_t: 0.0,
         };
         let result = find_conflict_point(&turn, &turn, 30);
-        // Same curve: distance is 0, within threshold -> returns Some
-        assert!(result.is_some());
+        // Same entry/exit edges → filtered as non-crossing
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn conflict_for_crossing_paths_different_edges() {
+        // Two crossing curves with distinct entry/exit edges → real conflict
+        let turn_a = BezierTurn {
+            entry_edge: 0,
+            exit_edge: 1,
+            p0: [0.0, 0.0],
+            p1: [50.0, 50.0],
+            p2: [100.0, 0.0],
+            arc_length: 120.0,
+            exit_offset_m: 0.1,
+            entry_t: 0.0,
+        };
+        let turn_b = BezierTurn {
+            entry_edge: 2,
+            exit_edge: 3,
+            p0: [50.0, -20.0],
+            p1: [50.0, 50.0],
+            p2: [50.0, 120.0],
+            arc_length: 140.0,
+            exit_offset_m: 0.1,
+            entry_t: 0.0,
+        };
+        let result = find_conflict_point(&turn_a, &turn_b, 30);
+        assert!(result.is_some(), "crossing paths with different edges should produce a conflict");
     }
 
     // ---- precompute_junction tests ----
@@ -1136,12 +1184,13 @@ mod tests {
 
     // ---- Close-junction merging tests ----
 
-    /// Build two close junctions (20m apart) connected by a short edge.
+    /// Build two close junctions (4m apart, within MERGE_DISTANCE_M=5)
+    /// connected by a short edge.
     ///
     /// ```text
-    ///    A (0,0) --> J1 (100,0) --> J2 (120,0) --> B (220,0)
+    ///    A (0,0) --> J1 (100,0) --> J2 (104,0) --> B (220,0)
     ///                  ^                ^
-    ///    C (100,100)---+   D (120,100)--+
+    ///    C (100,100)---+   D (104,100)--+
     /// ```
     fn build_close_junction_pair() -> (RoadGraph, NodeIndex, NodeIndex) {
         let mut g = DiGraph::new();

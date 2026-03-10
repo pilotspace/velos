@@ -14,7 +14,8 @@ use velos_core::components::{
 use velos_net::junction::BezierTurn;
 use velos_vehicle::idm::IdmParams;
 use velos_vehicle::junction_traversal::{
-    self, advance_on_bezier, check_conflicts, yield_deceleration, ConflictPoint, MIN_CRAWL_SPEED,
+    advance_on_bezier, check_conflicts, t_proximity_from_distance, yield_deceleration,
+    ConflictPoint, DEFAULT_CONFLICT_DISTANCE_M, MIN_CRAWL_SPEED,
 };
 use velos_vehicle::types::VehicleType as VehVehicleType;
 
@@ -155,7 +156,7 @@ impl SimWorld {
                     agents_here,
                     &local_conflicts,
                     turn.arc_length,
-                    junction_traversal::DEFAULT_T_PROXIMITY,
+                    t_proximity_from_distance(DEFAULT_CONFLICT_DISTANCE_M, turn.arc_length),
                 )
             {
                 let decel = yield_deceleration(
@@ -321,14 +322,19 @@ impl SimWorld {
 
             match next_junction {
                 Some((next_jn, next_turn_idx, next_turn, next_road_half_width)) => {
-                    // Smooth pre-advancement: start at entry_t (where the curve
-                    // passes through the junction centroid) plus accumulated overflow.
-                    // Cap advancement beyond entry_t to prevent teleporting through
-                    // the entire junction when overflow + edge_length >> arc_length.
+                    // Position-continuous chaining: find the t on the next Bezier
+                    // closest to the vehicle's current position, then advance by
+                    // overflow. This prevents the visible position jump that occurred
+                    // when using a fixed entry_t.
+                    let current_pos = self
+                        .world
+                        .query_one_mut::<&Position>(entity)
+                        .map(|p| [p.x, p.y])
+                        .unwrap_or([0.0, 0.0]);
+                    let base_t = next_turn.find_closest_t(current_pos, 30);
                     let next_arc = next_turn.arc_length.max(1.0);
                     let t_advance = (overflow_m / next_arc).min(Self::MAX_CHAIN_T_ADVANCE);
-                    let initial_t =
-                        (next_turn.entry_t + t_advance).min(0.99);
+                    let initial_t = (base_t + t_advance).min(0.99);
                     let next_overflow = if overflow_m > next_arc {
                         overflow_m - next_arc
                     } else {
@@ -794,7 +800,7 @@ mod tests {
             JunctionTraversal {
                 junction_node,
                 turn_index: 0,
-                t: 0.35, // dist to conflict (0.5) = 0.15, farther than foe → must yield
+                t: 0.48, // dist to conflict (0.5) = 0.02, farther than foe → must yield
                 lateral_offset: 3.5,
                 speed: 0.0,
                 wait_ticks: MAX_YIELD_TICKS, // at threshold
@@ -836,7 +842,7 @@ mod tests {
             JunctionTraversal {
                 junction_node,
                 turn_index: 1,
-                t: 0.48, // closer to conflict at 0.5 → has priority over agent A
+                t: 0.49, // closer to conflict at 0.5 → has priority over agent A
                 lateral_offset: 3.5,
                 speed: 10.0,
                 wait_ticks: 0,
@@ -1206,16 +1212,17 @@ mod tests {
 
         let jt = sim.world.query_one_mut::<&JunctionTraversal>(agent).unwrap();
         assert_eq!(jt.junction_node, j2_id, "should chain to junction 2");
-        // With uncapped logic: overflow ≈ 0.79 + 3 = 3.79m, t = 0.3 + 3.79/12.5 = 0.603
-        // With cap: t = 0.3 + min(3.79/12.5, 0.15) = 0.3 + 0.15 = 0.45
+        // Position-based t: vehicle is near P0 of J2 (closest t ≈ 0.0),
+        // then capped overflow advance ≈ min(overflow/arc, 0.15).
+        // Key: t must stay low (no teleport through junction) and be > 0.
         assert!(
-            jt.t <= 0.50,
+            jt.t <= 0.30,
             "t should be capped to prevent teleporting through junction, got {}",
             jt.t,
         );
         assert!(
-            jt.t >= 0.30,
-            "t should be at least entry_t (0.3), got {}",
+            jt.t > 0.0,
+            "t should advance past 0 due to overflow carry, got {}",
             jt.t,
         );
     }
