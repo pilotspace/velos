@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Digital Twin
-status: verifying
-stopped_at: Phase 17 context gathered
-last_updated: "2026-03-10T07:45:54.479Z"
-last_activity: 2026-03-09 -- Phase 16 Plan 04 Tasks 1-2 complete, awaiting visual verification
+status: in-progress
+stopped_at: Completed 17-01-PLAN.md
+last_updated: "2026-03-10T08:15:36Z"
+last_activity: 2026-03-10 -- Phase 17 Plan 01 complete (API scaffold, proto, bridge)
 progress:
   total_phases: 5
   completed_phases: 1
   total_plans: 4
-  completed_plans: 4
+  completed_plans: 1
   percent: 87
 ---
 
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-09)
 
 **Core value:** Motorbikes move realistically through traffic using continuous sublane positioning -- not forced into discrete lanes like Western traffic models
-**Current focus:** Phase 16 -- Intersection Sublane Model
+**Current focus:** Phase 17 -- Detection Ingestion & Demand Calibration
 
 ## Current Position
 
-Phase: 16 of 20 (Intersection Sublane Model)
-Plan: 4 of 4 in current phase
-Status: Checkpoint (human-verify)
-Last activity: 2026-03-09 -- Phase 16 Plan 04 Tasks 1-2 complete, awaiting visual verification
+Phase: 17 of 20 (Detection Ingestion & Demand Calibration)
+Plan: 1 of 4 in current phase (complete)
+Status: In Progress
+Last activity: 2026-03-10 -- Phase 17 Plan 01 complete (API scaffold, proto, bridge)
 
 Progress: [████████░░] 87% (v1.2)
 
@@ -39,6 +39,9 @@ Progress: [████████░░] 87% (v1.2)
 Decisions are logged in PROJECT.md Key Decisions table.
 Recent decisions affecting current work:
 
+- [17-01]: tonic-prost-build replaces tonic-build::compile_protos (API split in tonic 0.14)
+- [17-01]: Bounded mpsc channel (256) with drain(budget) for per-frame command processing
+- [17-01]: Oneshot reply channel in RegisterCamera ApiCommand for request-response pattern
 - [16-04]: Vehicle-type coloring replaces car-following-model coloring for clearer visual identity
 - [16-04]: Guide lines as quad strips (0.5m width) for cross-GPU consistency, not native lines
 - [16-04]: Instance buffer capacity 300K (was 8192) to support POC agent count
@@ -67,10 +70,10 @@ Recent decisions affecting current work:
 
 - Building count for POC area unverified (estimated 80K-120K)
 - wgpu version decision needed before Phase 18 (v27 current vs v28 available)
-- Protobuf contract design needed before Phase 17 implementation
+- Protobuf contract design needed before Phase 17 implementation -- RESOLVED (17-01)
 
 ## Session Continuity
 
-Last session: 2026-03-10T07:45:54.477Z
-Stopped at: Phase 17 context gathered
-Resume file: .planning/phases/17-detection-ingestion-demand-calibration/17-CONTEXT.md
+Last session: 2026-03-10T08:15:36Z
+Stopped at: Completed 17-01-PLAN.md
+Resume file: .planning/phases/17-detection-ingestion-demand-calibration/17-02-PLAN.md

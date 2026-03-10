@@ -21,7 +21,7 @@ Requirements for Digital Twin milestone. Each maps to roadmap phases.
 
 ### Detection Ingestion
 
-- [ ] **DET-01**: System exposes gRPC service accepting vehicle/pedestrian detection events from external CV services
+- [x] **DET-01**: System exposes gRPC service accepting vehicle/pedestrian detection events from external CV services
 - [ ] **DET-02**: System aggregates received detections into per-class counts per camera over configurable time windows
 - [ ] **DET-03**: User can register cameras with position, FOV, and network edge/junction mapping via gRPC or config
 - [ ] **DET-04**: User can see camera positions and FOV coverage areas overlaid on the map
@@ -87,7 +87,7 @@ Deferred to future release. Tracked but not in current roadmap.
 | ISL-04 | Phase 16 | Complete |
 | MAP-01 | Phase 16 | Complete |
 | MAP-02 | Phase 16 | Complete |
-| DET-01 | Phase 17 | Pending |
+| DET-01 | Phase 17 | Complete |
 | DET-02 | Phase 17 | Pending |
 | DET-03 | Phase 17 | Pending |
 | DET-04 | Phase 17 | Pending |
