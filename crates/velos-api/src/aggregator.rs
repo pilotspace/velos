@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use crate::proto::velos::v2::{DetectionEvent, VehicleClass};
+use crate::proto::velos::v2::DetectionEvent;
 
 /// Default window duration: 5 minutes in milliseconds.
 const DEFAULT_WINDOW_DURATION_MS: i64 = 300_000;
@@ -137,6 +137,7 @@ impl Default for DetectionAggregator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::proto::velos::v2::VehicleClass;
 
     fn make_event(
         camera_id: u32,
