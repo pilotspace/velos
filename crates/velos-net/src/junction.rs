@@ -35,7 +35,7 @@ const JUNCTION_RADIUS_M: f64 = 15.0;
 /// Maximum distance (metres) between two junction nodes for them to be merged
 /// into a single cluster. Set to `2 * JUNCTION_RADIUS_M` so overlapping Bezier
 /// curves are unified rather than fighting each other.
-const MERGE_DISTANCE_M: f64 = 30.0;
+const MERGE_DISTANCE_M: f64 = 5.0;
 
 /// Number of sample steps per curve for conflict detection grid search.
 const CONFLICT_SEARCH_STEPS: usize = 30;
@@ -535,7 +535,10 @@ fn precompute_merged_junction(
             ];
 
             let arc_length = estimate_arc_length(&p0, &p1, &p2, ARC_LENGTH_SAMPLES);
-            if arc_length < MIN_ARC_LENGTH_M {
+            // For merged clusters, require a higher minimum arc length to
+            // eliminate tiny overlapping paths that cause vehicles to get stuck.
+            let min_arc = if cluster.len() > 1 { 5.0 } else { MIN_ARC_LENGTH_M };
+            if arc_length < min_arc {
                 continue;
             }
 
@@ -1144,15 +1147,15 @@ mod tests {
         let mut g = DiGraph::new();
         let a = g.add_node(RoadNode { pos: [0.0, 0.0] });
         let j1 = g.add_node(RoadNode { pos: [100.0, 0.0] });
-        let j2 = g.add_node(RoadNode { pos: [120.0, 0.0] });
+        let j2 = g.add_node(RoadNode { pos: [104.0, 0.0] });
         let b = g.add_node(RoadNode { pos: [220.0, 0.0] });
         let c = g.add_node(RoadNode { pos: [100.0, 100.0] });
-        let d = g.add_node(RoadNode { pos: [120.0, 100.0] });
+        let d = g.add_node(RoadNode { pos: [104.0, 100.0] });
 
         // Edges making j1 and j2 junctions (in>1 or out>1)
         g.add_edge(a, j1, test_edge(100.0));
-        g.add_edge(j1, j2, test_edge(20.0)); // short internal edge
-        g.add_edge(j2, b, test_edge(100.0));
+        g.add_edge(j1, j2, test_edge(4.0)); // short internal edge (<MERGE_DISTANCE_M)
+        g.add_edge(j2, b, test_edge(116.0));
         g.add_edge(c, j1, test_edge(100.0));
         g.add_edge(d, j2, test_edge(100.0));
         // Outgoing from j1/j2 to make them true junctions
