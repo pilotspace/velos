@@ -1,0 +1,79 @@
+syntax = "proto3";
+package velos.v2;
+
+service DetectionService {
+    // Bidirectional: client streams detection batches, server streams acks.
+    rpc StreamDetections(stream DetectionBatch) returns (stream DetectionAck);
+
+    // Unary: register a camera with position and FOV.
+    rpc RegisterCamera(RegisterCameraRequest) returns (RegisterCameraResponse);
+
+    // Unary: list all registered cameras.
+    rpc ListCameras(ListCamerasRequest) returns (ListCamerasResponse);
+}
+
+enum VehicleClass {
+    VEHICLE_CLASS_UNSPECIFIED = 0;
+    MOTORBIKE = 1;
+    CAR = 2;
+    BUS = 3;
+    TRUCK = 4;
+    BICYCLE = 5;
+    PEDESTRIAN = 6;
+}
+
+message DetectionEvent {
+    uint32 camera_id = 1;
+    int64 timestamp_ms = 2;
+    VehicleClass vehicle_class = 3;
+    uint32 count = 4;
+    optional float speed_kmh = 5;
+}
+
+message DetectionBatch {
+    uint64 batch_id = 1;
+    repeated DetectionEvent events = 2;
+}
+
+message DetectionAck {
+    uint64 batch_id = 1;
+
+    enum Status {
+        OK = 0;
+        UNKNOWN_CAMERA = 1;
+        INVALID_DATA = 2;
+    }
+
+    Status status = 2;
+}
+
+message RegisterCameraRequest {
+    double lat = 1;
+    double lon = 2;
+    float heading_deg = 3;
+    float fov_deg = 4;
+    float range_m = 5;
+    string name = 6;
+}
+
+message RegisterCameraResponse {
+    uint32 camera_id = 1;
+    repeated uint32 covered_edge_ids = 2;
+}
+
+message ListCamerasRequest {}
+
+message ListCamerasResponse {
+    repeated CameraInfo cameras = 1;
+}
+
+message CameraInfo {
+    uint32 camera_id = 1;
+    string name = 2;
+    double lat = 3;
+    double lon = 4;
+    float heading_deg = 5;
+    float fov_deg = 6;
+    float range_m = 7;
+    repeated uint32 covered_edge_ids = 8;
+}

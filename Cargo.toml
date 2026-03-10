@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/velos-core", "crates/velos-gpu", "crates/velos-net", "crates/velos-vehicle", "crates/velos-demand", "crates/velos-signal", "crates/velos-meso", "crates/velos-predict"]
+members = ["crates/velos-core", "crates/velos-gpu", "crates/velos-net", "crates/velos-vehicle", "crates/velos-demand", "crates/velos-signal", "crates/velos-meso", "crates/velos-predict", "crates/velos-api"]
 
 [workspace.package]
 version = "0.1.0"
@@ -32,3 +32,9 @@ postcard = { version = "1", features = ["alloc"] }
 arc-swap = "1"
 rayon = "1"
 tempfile = "3"
+tonic = "0.14"
+prost = "0.14"
+tonic-build = "0.14"
+tonic-prost = "0.14"
+tonic-prost-build = "0.14"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
