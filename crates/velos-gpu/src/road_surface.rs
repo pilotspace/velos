@@ -60,6 +60,36 @@ pub struct JunctionData {
     pub boundary_points: Vec<[f64; 2]>,
 }
 
+/// Convert velos_net junction data into road_surface junction data for 3D rendering.
+///
+/// Extracts boundary points from BezierTurn entry (p0) and exit (p2) points,
+/// deduplicating nearby points within 0.5m tolerance.
+pub fn convert_junction_data(
+    net_data: &std::collections::HashMap<u32, velos_net::junction::JunctionData>,
+) -> std::collections::HashMap<u32, JunctionData> {
+    net_data
+        .iter()
+        .map(|(&id, jd)| {
+            let mut points: Vec<[f64; 2]> = Vec::new();
+            for turn in &jd.turns {
+                // Add entry and exit points
+                for pt in &[turn.p0, turn.p2] {
+                    // Dedup: skip if within 0.5m of existing point
+                    let near = points.iter().any(|p| {
+                        let dx = p[0] - pt[0];
+                        let dy = p[1] - pt[1];
+                        (dx * dx + dy * dy).sqrt() < 0.5
+                    });
+                    if !near {
+                        points.push(*pt);
+                    }
+                }
+            }
+            (id, JunctionData { boundary_points: points })
+        })
+        .collect()
+}
+
 // --- Geometry generation ---
 
 /// Compute perpendicular offset vectors for a polyline segment.

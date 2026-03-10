@@ -11,16 +11,20 @@ use winit::{
     dpi::PhysicalSize,
     event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent},
     event_loop::ActiveEventLoop,
+    keyboard::{KeyCode, PhysicalKey},
     window::{Window, WindowAttributes, WindowId},
 };
 
 use velos_api::bridge::ApiBridge;
 
 use crate::{
+    app_input,
     camera::Camera2D,
     compute::ComputeDispatcher,
+    orbit_camera::{OrbitCamera, ViewMode, ViewTransition},
     renderer::Renderer,
-    sim::{SimState, SimWorld},
+    renderer3d::Renderer3D,
+    sim::SimWorld,
 };
 
 /// All GPU, rendering, and simulation state.
@@ -32,9 +36,17 @@ struct GpuState {
     queue: wgpu::Queue,
     _adapter: wgpu::Adapter,
     renderer: Renderer,
+    renderer_3d: Renderer3D,
     camera: Camera2D,
+    orbit_camera: OrbitCamera,
+    view_mode: ViewMode,
+    view_transition: Option<ViewTransition>,
     sim: SimWorld,
     compute_dispatcher: ComputeDispatcher,
+    /// True while the middle mouse button is held (3D pan).
+    middle_pressed: bool,
+    /// Last cursor position for computing orbit/pan deltas.
+    last_cursor_pos: Option<(f32, f32)>,
     // egui state
     egui_ctx: egui::Context,
     egui_state: egui_winit::State,
@@ -106,6 +118,8 @@ impl GpuState {
         surface.configure(&device, &surface_config);
 
         let mut renderer = Renderer::new(&device, format);
+        let mut renderer_3d =
+            Renderer3D::new(&device, format, size.width.max(1), size.height.max(1));
 
         // Load road graph.
         let pbf_path = std::path::Path::new("data/hcmc/district1.osm.pbf");
@@ -173,12 +187,18 @@ impl GpuState {
             });
         });
 
+        // Upload road geometry to 3D renderer.
+        let junction_3d = crate::road_surface::convert_junction_data(&sim.junction_data);
+        renderer_3d.upload_road_geometry(&device, &sim.road_graph, &junction_3d);
+
         let road_lines = sim.road_edge_lines();
         let (cx, cy) = sim.network_center();
 
         let mut camera = Camera2D::new(Vec2::new(size.width as f32, size.height as f32));
         camera.center = Vec2::new(cx, cy);
         camera.zoom = 0.5; // Start zoomed out to see the network.
+
+        let orbit_camera = OrbitCamera::from_camera_2d(&camera);
 
         // Upload road network lines for rendering.
         renderer.upload_road_lines(&device, &road_lines);
@@ -217,9 +237,15 @@ impl GpuState {
             queue,
             _adapter: adapter,
             renderer,
+            renderer_3d,
             camera,
+            orbit_camera,
+            view_mode: ViewMode::TopDown2D,
+            view_transition: None,
             sim,
             compute_dispatcher,
+            middle_pressed: false,
+            last_cursor_pos: None,
             egui_ctx,
             egui_state,
             egui_renderer,
@@ -242,6 +268,10 @@ impl GpuState {
             self.surface_config.height = new_size.height;
             self.surface.configure(&self.device, &self.surface_config);
             self.camera
+                .resize(Vec2::new(new_size.width as f32, new_size.height as f32));
+            self.renderer_3d
+                .resize(&self.device, new_size.width, new_size.height);
+            self.orbit_camera
                 .resize(Vec2::new(new_size.width as f32, new_size.height as f32));
         }
     }
@@ -266,6 +296,35 @@ impl GpuState {
         pedestrians.extend(self.sim.build_signal_indicators());
         self.renderer
             .update_instances_typed(&self.queue, &motorbikes, &cars, &pedestrians);
+
+        // Advance view transition if active.
+        if let Some(ref mut transition) = self.view_transition {
+            let done = transition.tick(frame_dt as f32);
+            if done {
+                self.view_mode = transition.to;
+                self.view_transition = None;
+            }
+        }
+
+        // Update 3D renderer when in 3D mode (or transitioning to/from 3D).
+        let needs_3d = matches!(self.view_mode, ViewMode::Perspective3D)
+            || self
+                .view_transition
+                .as_ref()
+                .is_some_and(|t| t.to == ViewMode::Perspective3D);
+        if needs_3d {
+            self.renderer_3d
+                .update_camera(&self.queue, &self.orbit_camera);
+            self.renderer_3d
+                .update_lighting(&self.queue, self.sim.sim_time);
+            let lod_buffers =
+                self.sim.build_instances_3d(self.orbit_camera.eye_position());
+            self.renderer_3d.upload_agent_instances(
+                &self.device,
+                &lod_buffers.mesh_instances,
+                &lod_buffers.billboard_instances,
+            );
+        }
 
         // Update camera overlay geometry only when camera count changes.
         // Uses try_lock to avoid blocking the render loop if gRPC holds the lock.
@@ -331,166 +390,47 @@ impl GpuState {
         let output = self.surface.get_current_texture()?;
         let view = output.texture.create_view(&Default::default());
 
-        self.renderer.update_camera(&self.queue, &self.camera);
-
-        // Render agents and overlays into first encoder.
+        // Branch rendering based on view mode.
         {
             let mut encoder = self.device.create_command_encoder(&Default::default());
-            self.renderer.render_frame(
-                &mut encoder,
-                &view,
-                self.show_guide_lines,
-                self.show_conflict_debug,
-                self.show_cameras,
-                self.show_speed_overlay,
-            );
+            match self.view_mode {
+                ViewMode::TopDown2D => {
+                    self.renderer.update_camera(&self.queue, &self.camera);
+                    self.renderer.render_frame(
+                        &mut encoder,
+                        &view,
+                        self.show_guide_lines,
+                        self.show_conflict_debug,
+                        self.show_cameras,
+                        self.show_speed_overlay,
+                    );
+                }
+                ViewMode::Perspective3D => {
+                    self.renderer_3d.render_frame(&mut encoder, &view);
+                }
+            }
             self.queue.submit(std::iter::once(encoder.finish()));
         }
 
-        // egui UI -- inline drawing to avoid borrow checker issues.
+        // egui UI via extracted module to keep app.rs under 700 lines.
         let raw_input = self.egui_state.take_egui_input(&self.window);
-        let sim = &mut self.sim;
-        let show_gl = &mut self.show_guide_lines;
-        let show_cd = &mut self.show_conflict_debug;
-        let show_cam = &mut self.show_cameras;
-        let show_speed = &mut self.show_speed_overlay;
-        let grpc_addr_ref = &self.grpc_addr;
+        let mut panel = crate::app_egui::EguiPanelState {
+            sim: &mut self.sim,
+            show_guide_lines: &mut self.show_guide_lines,
+            show_conflict_debug: &mut self.show_conflict_debug,
+            show_cameras: &mut self.show_cameras,
+            show_speed_overlay: &mut self.show_speed_overlay,
+            grpc_addr: &self.grpc_addr,
+            view_mode: &mut self.view_mode,
+            view_transition: &mut self.view_transition,
+            camera_2d: &mut self.camera,
+            orbit_camera: &mut self.orbit_camera,
+        };
         let full_output = self.egui_ctx.run(raw_input, |ctx| {
             egui::SidePanel::left("controls")
                 .exact_width(240.0)
                 .show(ctx, |ui| {
-                    ui.heading("VELOS");
-                    ui.separator();
-
-                    ui.heading("Controls");
-                    let is_running = sim.sim_state == SimState::Running;
-                    let btn_text = if is_running { "Pause" } else { "Start" };
-                    if ui.button(btn_text).clicked() {
-                        sim.sim_state = if is_running {
-                            SimState::Paused
-                        } else {
-                            SimState::Running
-                        };
-                    }
-                    if ui.button("Reset").clicked() {
-                        sim.reset();
-                    }
-                    ui.add(
-                        egui::Slider::new(&mut sim.speed_mult, 0.1..=4.0)
-                            .text("Speed"),
-                    );
-                    ui.separator();
-
-                    ui.heading("Metrics");
-                    let m = &sim.metrics;
-                    ui.label(format!("Frame: {:.1}ms", m.frame_time_ms));
-                    let hours = (m.sim_time / 3600.0) as u32;
-                    let mins = ((m.sim_time % 3600.0) / 60.0) as u32;
-                    let secs = (m.sim_time % 60.0) as u32;
-                    ui.label(format!("Time: {:02}:{:02}:{:02}", hours, mins, secs));
-                    ui.label(format!("Agents: {}", m.agent_count));
-                    ui.separator();
-
-                    ui.heading("Vehicles");
-                    let legend: &[(&str, [u8; 3], u32)] = &[
-                        ("Motorbike",  [255, 153, 0],   m.motorbike_count),   // orange
-                        ("Car",        [51, 102, 255],   m.car_count),         // blue
-                        ("Bus",        [51, 204, 51],    m.bus_count),          // green
-                        ("Bicycle",    [230, 230, 51],   m.bicycle_count),     // yellow
-                        ("Truck",      [230, 51, 51],    m.truck_count),       // red
-                        ("Emergency",  [255, 255, 255],  m.emergency_count),   // white
-                        ("Pedestrian", [230, 230, 230],  m.ped_count),         // grey
-                    ];
-                    for &(name, [r, g, b], count) in legend {
-                        ui.horizontal(|ui| {
-                            let (rect, _) = ui.allocate_exact_size(
-                                egui::vec2(12.0, 12.0),
-                                egui::Sense::hover(),
-                            );
-                            ui.painter().rect_filled(
-                                rect,
-                                2.0,
-                                egui::Color32::from_rgb(r, g, b),
-                            );
-                            ui.label(format!("{name}: {count}"));
-                        });
-                    }
-
-                    // Bus line color legend (per-route breakdown).
-                    if m.bus_count > 0 {
-                        ui.separator();
-                        ui.heading("Bus Lines");
-                        let bus_colors: &[(&str, [u8; 3])] = &[
-                            ("Line 0", [255, 214, 0]),    // gold
-                            ("Line 1", [0, 191, 102]),    // emerald
-                            ("Line 2", [217, 51, 51]),    // crimson
-                            ("Line 3", [51, 153, 255]),   // dodger blue
-                            ("Line 4", [237, 128, 0]),    // tangerine
-                            ("Line 5", [153, 51, 204]),   // purple
-                            ("Line 6", [0, 204, 204]),    // teal
-                            ("Line 7", [230, 102, 153]),  // rose
-                        ];
-                        for &(name, [r, g, b]) in bus_colors {
-                            ui.horizontal(|ui| {
-                                let (rect, _) = ui.allocate_exact_size(
-                                    egui::vec2(12.0, 12.0),
-                                    egui::Sense::hover(),
-                                );
-                                ui.painter().rect_filled(
-                                    rect,
-                                    2.0,
-                                    egui::Color32::from_rgb(r, g, b),
-                                );
-                                ui.label(name);
-                            });
-                        }
-                    }
-
-                    ui.separator();
-                    ui.heading("Debug Overlays");
-                    ui.checkbox(show_gl, "Show Guide Lines");
-                    ui.checkbox(show_cd, "Show Conflict Debug");
-                    ui.checkbox(show_cam, "Show Cameras");
-                    ui.checkbox(show_speed, "Show Speed Overlay");
-
-                    ui.separator();
-                    ui.checkbox(&mut sim.show_calibration_panel, "Calibration Panel");
-
-                    if sim.show_calibration_panel {
-                        ui.separator();
-                        ui.heading("Calibration");
-                        ui.label(format!("gRPC: {}", grpc_addr_ref));
-
-                        let reg = sim.camera_registry.lock().unwrap();
-                        let cameras = reg.list();
-                        ui.label(format!("Cameras: {}", cameras.len()));
-
-                        if !cameras.is_empty() {
-                            egui::Grid::new("calibration_grid")
-                                .striped(true)
-                                .show(ui, |ui| {
-                                    ui.label("Camera");
-                                    ui.label("Obs");
-                                    ui.label("Sim");
-                                    ui.label("Ratio");
-                                    ui.end_row();
-
-                                    for cam in &cameras {
-                                        let state = sim.calibration_states
-                                            .get(&cam.id);
-                                        let obs = state.map(|s| s.last_observed).unwrap_or(0);
-                                        let sim_count = state.map(|s| s.last_simulated).unwrap_or(0);
-                                        let ratio = state.map(|s| s.previous_ratio).unwrap_or(1.0);
-
-                                        ui.label(&cam.name);
-                                        ui.label(format!("{obs}"));
-                                        ui.label(format!("{sim_count}"));
-                                        ui.label(format!("{ratio:.2}"));
-                                        ui.end_row();
-                                    }
-                                });
-                        }
-                    }
+                    crate::app_egui::draw_control_panel(ui, &mut panel);
                 });
         });
 
@@ -608,11 +548,21 @@ impl ApplicationHandler for VelosApp {
             WindowEvent::CloseRequested => event_loop.exit(),
 
             WindowEvent::KeyboardInput { event, .. } => {
-                if !egui_wants_keyboard
-                    && event.physical_key
-                        == winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Escape)
-                {
-                    event_loop.exit();
+                if !egui_wants_keyboard && event.state == ElementState::Pressed {
+                    match event.physical_key {
+                        PhysicalKey::Code(KeyCode::Escape) => event_loop.exit(),
+                        PhysicalKey::Code(KeyCode::KeyV) => {
+                            if state.view_transition.is_none() {
+                                state.view_transition =
+                                    Some(app_input::toggle_view_mode(
+                                        state.view_mode,
+                                        &mut state.camera,
+                                        &mut state.orbit_camera,
+                                    ));
+                            }
+                        }
+                        _ => {}
+                    }
                 }
             }
 
@@ -635,54 +585,67 @@ impl ApplicationHandler for VelosApp {
                 state.window.request_redraw();
             }
 
-            WindowEvent::MouseWheel { delta, .. } => {
+            WindowEvent::MouseWheel { .. }
+            | WindowEvent::CursorMoved { .. }
+            | WindowEvent::MouseInput { .. } => {
                 if !egui_wants_pointer {
-                    match delta {
-                        MouseScrollDelta::LineDelta(x, y) => {
-                            if x.abs() > 0.0 {
-                                state.camera.pan_by(x * 20.0, 0.0);
+                    match state.view_mode {
+                        ViewMode::Perspective3D => {
+                            app_input::handle_3d_input(
+                                &event,
+                                &mut state.orbit_camera,
+                                &mut state.left_pressed,
+                                &mut state.middle_pressed,
+                                &mut state.last_cursor_pos,
+                            );
+                        }
+                        ViewMode::TopDown2D => match event {
+                            WindowEvent::MouseWheel { delta, .. } => match delta {
+                                MouseScrollDelta::LineDelta(x, y) => {
+                                    if x.abs() > 0.0 {
+                                        state.camera.pan_by(x * 20.0, 0.0);
+                                    }
+                                    state.camera.scroll(y);
+                                }
+                                MouseScrollDelta::PixelDelta(pos) => {
+                                    let px = pos.x as f32;
+                                    let py = pos.y as f32;
+                                    if px.abs() > 1.0 {
+                                        state.camera.pan_by(px, 0.0);
+                                    }
+                                    state.camera.scroll(py / 20.0);
+                                }
+                            },
+                            WindowEvent::CursorMoved { position, .. } => {
+                                let new_pos =
+                                    Vec2::new(position.x as f32, position.y as f32);
+                                if state.left_pressed {
+                                    if !state.camera.is_panning() {
+                                        state.camera.begin_pan(new_pos);
+                                    } else {
+                                        state.camera.update_pan(new_pos);
+                                    }
+                                }
                             }
-                            state.camera.scroll(y);
-                        }
-                        MouseScrollDelta::PixelDelta(pos) => {
-                            let px = pos.x as f32;
-                            let py = pos.y as f32;
-                            if px.abs() > 1.0 {
-                                state.camera.pan_by(px, 0.0);
+                            WindowEvent::MouseInput {
+                                state: btn_state,
+                                button,
+                                ..
+                            } => {
+                                if button == MouseButton::Left {
+                                    match btn_state {
+                                        ElementState::Pressed => {
+                                            state.left_pressed = true;
+                                        }
+                                        ElementState::Released => {
+                                            state.left_pressed = false;
+                                            state.camera.end_pan();
+                                        }
+                                    }
+                                }
                             }
-                            state.camera.scroll(py / 20.0);
-                        }
-                    }
-                }
-            }
-
-            WindowEvent::CursorMoved { position, .. } => {
-                if !egui_wants_pointer {
-                    let new_pos = Vec2::new(position.x as f32, position.y as f32);
-                    if state.left_pressed {
-                        if !state.camera.is_panning() {
-                            state.camera.begin_pan(new_pos);
-                        } else {
-                            state.camera.update_pan(new_pos);
-                        }
-                    }
-                }
-            }
-
-            WindowEvent::MouseInput {
-                state: btn_state,
-                button,
-                ..
-            } => {
-                if !egui_wants_pointer && button == MouseButton::Left {
-                    match btn_state {
-                        ElementState::Pressed => {
-                            state.left_pressed = true;
-                        }
-                        ElementState::Released => {
-                            state.left_pressed = false;
-                            state.camera.end_pan();
-                        }
+                            _ => {}
+                        },
                     }
                 }
             }

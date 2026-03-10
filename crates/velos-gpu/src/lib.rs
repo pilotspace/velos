@@ -2,6 +2,8 @@
 //! Exposes high-level API only -- no raw wgpu types in public API.
 
 pub mod app;
+mod app_egui;
+pub mod app_input;
 pub mod buffers;
 pub mod camera;
 pub mod orbit_camera;
@@ -53,4 +55,4 @@ pub use lighting::{compute_lighting, LightingUniform};
 pub use lod::{classify_lod, LodTier};
 pub use mesh_loader::{load_glb, LoadedMesh, MeshSet, Vertex3D};
 pub use renderer3d::Renderer3D;
-pub use road_surface::{RoadSurfaceVertex, JunctionData, generate_road_mesh, generate_lane_markings, generate_junction_surfaces};
+pub use road_surface::{RoadSurfaceVertex, JunctionData, generate_road_mesh, generate_lane_markings, generate_junction_surfaces, convert_junction_data};
