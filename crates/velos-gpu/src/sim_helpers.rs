@@ -298,12 +298,11 @@ impl SimWorld {
                                 wait_ticks: 0,
                             },
                         );
-                        if extra_steps > 0 {
-                            if let Ok(route) =
+                        if extra_steps > 0
+                            && let Ok(route) =
                                 self.world.query_one_mut::<&mut Route>(entity)
-                            {
-                                route.current_step += extra_steps;
-                            }
+                        {
+                            route.current_step += extra_steps;
                         }
 
                         // Immediately set Position to Bezier(initial_t) so there

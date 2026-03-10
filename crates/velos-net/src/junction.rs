@@ -710,7 +710,7 @@ pub fn precompute_all_junctions(graph: &RoadGraph) -> HashMap<u32, JunctionData>
     // Step 4: Compute junction data per cluster
     let mut result = HashMap::new();
 
-    for (_root, cluster) in &clusters {
+    for cluster in clusters.values() {
         let data = if cluster.len() == 1 {
             // Single-node junction — use original logic
             let d = precompute_junction(graph, cluster[0]);
