@@ -114,8 +114,8 @@ pub fn compute_lighting(sim_elapsed_seconds: f64) -> LightingUniform {
         let n = kfs.len();
         // Find the keyframe pair that brackets `tod`
         let mut idx = n - 1; // default: last keyframe (sunset->night wrap)
-        for i in 0..n {
-            if tod < kfs[i].time {
+        for (i, kf) in kfs.iter().enumerate().take(n) {
+            if tod < kf.time {
                 idx = if i == 0 { n - 1 } else { i - 1 };
                 break;
             }
