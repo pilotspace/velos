@@ -9,15 +9,15 @@ Requirements for Digital Twin milestone. Each maps to roadmap phases.
 
 ### Intersection Sublane
 
-- [ ] **ISL-01**: Vehicles maintain continuous lateral position through junction internal edges (not reset to lane center)
-- [ ] **ISL-02**: Motorbikes can filter and weave through intersection areas using probe-based gap scanning
-- [ ] **ISL-03**: Turn geometry supports sublane positioning (curved paths through intersections with lateral offset)
-- [ ] **ISL-04**: Conflict detection at crossing points within junctions resolves priority between sublane-positioned agents
+- [x] **ISL-01**: Vehicles maintain continuous lateral position through junction internal edges (not reset to lane center)
+- [x] **ISL-02**: Motorbikes can filter and weave through intersection areas using probe-based gap scanning
+- [x] **ISL-03**: Turn geometry supports sublane positioning (curved paths through intersections with lateral offset)
+- [x] **ISL-04**: Conflict detection at crossing points within junctions resolves priority between sublane-positioned agents
 
 ### 2D Map Rendering
 
-- [ ] **MAP-01**: Self-hosted 2D vector map tiles from OSM render as background layer in the simulation view
-- [ ] **MAP-02**: Sublane positions are visually rendered in 2D — vehicles show lateral offsets through intersections with lane marking context
+- [x] **MAP-01**: Self-hosted 2D vector map tiles from OSM render as background layer in the simulation view
+- [x] **MAP-02**: Sublane positions are visually rendered in 2D — vehicles show lateral offsets through intersections with lane marking context
 
 ### Detection Ingestion
 
@@ -81,12 +81,12 @@ Deferred to future release. Tracked but not in current roadmap.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| ISL-01 | Phase 16 | Pending |
-| ISL-02 | Phase 16 | Pending |
-| ISL-03 | Phase 16 | Pending |
-| ISL-04 | Phase 16 | Pending |
-| MAP-01 | Phase 16 | Pending |
-| MAP-02 | Phase 16 | Pending |
+| ISL-01 | Phase 16 | Complete |
+| ISL-02 | Phase 16 | Complete |
+| ISL-03 | Phase 16 | Complete |
+| ISL-04 | Phase 16 | Complete |
+| MAP-01 | Phase 16 | Complete |
+| MAP-02 | Phase 16 | Complete |
 | DET-01 | Phase 17 | Pending |
 | DET-02 | Phase 17 | Pending |
 | DET-03 | Phase 17 | Pending |

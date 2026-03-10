@@ -40,6 +40,10 @@ struct GpuState {
     /// True while the left mouse button is held down.
     left_pressed: bool,
     last_frame_time: std::time::Instant,
+    /// Show dashed Bezier guide lines through junctions.
+    show_guide_lines: bool,
+    /// Show conflict crossing points and active conflict pair debug overlay.
+    show_conflict_debug: bool,
 }
 
 impl GpuState {
@@ -123,6 +127,19 @@ impl GpuState {
         // Upload road network lines for rendering.
         renderer.upload_road_lines(&device, &road_lines);
 
+        // Initialize map tile renderer (PMTiles background layer).
+        let pmtiles_path = std::path::Path::new("data/hcmc/hcmc.pmtiles");
+        if pmtiles_path.exists() {
+            renderer.init_map_tiles(&device, Some(pmtiles_path));
+            log::info!("Map tiles initialized from {:?}", pmtiles_path);
+        } else {
+            log::warn!("PMTiles not found at {:?}, map tiles disabled", pmtiles_path);
+        }
+
+        // Upload guide lines and debug overlay for junction visualization.
+        renderer.update_guide_lines(&device, &sim.junction_data);
+        renderer.update_debug_overlay(&device, &sim.junction_data);
+
         // Initialize egui.
         let egui_ctx = egui::Context::default();
         let egui_state = egui_winit::State::new(
@@ -152,6 +169,8 @@ impl GpuState {
             egui_renderer,
             left_pressed: false,
             last_frame_time: std::time::Instant::now(),
+            show_guide_lines: false,
+            show_conflict_debug: false,
         }
     }
 
@@ -170,6 +189,9 @@ impl GpuState {
         let frame_dt = now.duration_since(self.last_frame_time).as_secs_f64();
         self.last_frame_time = now;
         self.sim.metrics.frame_time_ms = frame_dt * 1000.0;
+
+        // Update map tiles (load/decode visible tiles based on camera viewport).
+        self.renderer.update_map_tiles(&self.camera, &self.device);
 
         let base_dt = 0.016_f64; // ~60 FPS base timestep
         let (motorbikes, cars, mut pedestrians) = self.sim.tick_gpu(
@@ -190,16 +212,23 @@ impl GpuState {
 
         self.renderer.update_camera(&self.queue, &self.camera);
 
-        // Render agents into first encoder.
+        // Render agents and overlays into first encoder.
         {
             let mut encoder = self.device.create_command_encoder(&Default::default());
-            self.renderer.render_frame(&mut encoder, &view);
+            self.renderer.render_frame(
+                &mut encoder,
+                &view,
+                self.show_guide_lines,
+                self.show_conflict_debug,
+            );
             self.queue.submit(std::iter::once(encoder.finish()));
         }
 
         // egui UI -- inline drawing to avoid borrow checker issues.
         let raw_input = self.egui_state.take_egui_input(&self.window);
         let sim = &mut self.sim;
+        let show_gl = &mut self.show_guide_lines;
+        let show_cd = &mut self.show_conflict_debug;
         let full_output = self.egui_ctx.run(raw_input, |ctx| {
             egui::SidePanel::left("controls")
                 .exact_width(240.0)
@@ -238,13 +267,13 @@ impl GpuState {
 
                     ui.heading("Vehicles");
                     let legend: &[(&str, [u8; 3], u32)] = &[
-                        ("Motorbike",  [51, 204, 102],  m.motorbike_count),
-                        ("Car",        [51, 102, 230],  m.car_count),
-                        ("Bus",        [230, 230, 0],   m.bus_count),
-                        ("Bicycle",    [0, 230, 230],   m.bicycle_count),
-                        ("Truck",      [153, 102, 51],  m.truck_count),
-                        ("Emergency",  [255, 0, 0],     m.emergency_count),
-                        ("Pedestrian", [230, 230, 230], m.ped_count),
+                        ("Motorbike",  [255, 153, 0],   m.motorbike_count),   // orange
+                        ("Car",        [51, 102, 255],   m.car_count),         // blue
+                        ("Bus",        [51, 204, 51],    m.bus_count),          // green
+                        ("Bicycle",    [230, 230, 51],   m.bicycle_count),     // yellow
+                        ("Truck",      [230, 51, 51],    m.truck_count),       // red
+                        ("Emergency",  [255, 255, 255],  m.emergency_count),   // white
+                        ("Pedestrian", [230, 230, 230],  m.ped_count),         // grey
                     ];
                     for &(name, [r, g, b], count) in legend {
                         ui.horizontal(|ui| {
@@ -290,6 +319,11 @@ impl GpuState {
                             });
                         }
                     }
+
+                    ui.separator();
+                    ui.heading("Debug Overlays");
+                    ui.checkbox(show_gl, "Show Guide Lines");
+                    ui.checkbox(show_cd, "Show Conflict Debug");
                 });
         });
 

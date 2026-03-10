@@ -120,6 +120,42 @@ pub enum CarFollowingModel {
     Krauss = 1,
 }
 
+/// Maximum yield ticks before an agent forces a crawl through a conflict point.
+/// Prevents permanent deadlock when two agents yield to each other.
+pub const MAX_YIELD_TICKS: u16 = 100;
+
+/// ECS component for an agent traversing a junction on a Bezier curve.
+///
+/// Attached when an agent enters a junction, removed when the agent exits
+/// to the next edge. The `t` parameter advances along the precomputed
+/// `BezierTurn` curve, and `lateral_offset` is locked at junction entry.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct JunctionTraversal {
+    /// Index of the junction node in the road graph.
+    pub junction_node: u32,
+    /// Index of the BezierTurn in the junction's turns array.
+    pub turn_index: u16,
+    /// Current parameter along the Bezier curve [0.0, 1.0].
+    pub t: f64,
+    /// Locked lateral offset (from when agent entered junction).
+    pub lateral_offset: f64,
+    /// Speed along the curve (m/s).
+    pub speed: f64,
+    /// Ticks spent yielding at a conflict point. Incremented each tick
+    /// while waiting; reset to 0 when not yielding. If this reaches
+    /// [`MAX_YIELD_TICKS`], the agent forces a crawl to break deadlock.
+    pub wait_ticks: u16,
+}
+
+/// Marker: agent just exited a junction this frame.
+///
+/// Prevents `step_vehicles_gpu` from processing the agent in the same frame
+/// it exited a junction — otherwise the vehicle step can overshoot the exit
+/// edge and enter the next junction, causing a single-frame teleport.
+/// Removed at the start of the next `step_junction_traversal`.
+#[derive(Debug, Clone, Copy)]
+pub struct JustExitedJunction;
+
 /// GPU-side agent state packed for compute shader buffers.
 ///
 /// All position and speed fields use fixed-point integer representation
@@ -160,4 +196,82 @@ pub struct GpuAgentState {
     /// Bitfield flags for agent state.
     /// bit0=at_bus_stop, bit1=emergency_active, bit2=yielding.
     pub flags: u32,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn junction_traversal_derives() {
+        let jt = JunctionTraversal {
+            junction_node: 42,
+            turn_index: 3,
+            t: 0.5,
+            lateral_offset: 1.2,
+            speed: 5.0,
+            wait_ticks: 0,
+        };
+
+        // Debug
+        let dbg = format!("{:?}", jt);
+        assert!(dbg.contains("JunctionTraversal"));
+
+        // Clone + Copy
+        let jt2 = jt;
+        let jt3 = jt2;
+        assert_eq!(jt, jt2);
+        assert_eq!(jt2, jt3);
+
+        // PartialEq
+        let jt_diff = JunctionTraversal {
+            junction_node: 42,
+            turn_index: 3,
+            t: 0.6,
+            lateral_offset: 1.2,
+            speed: 5.0,
+            wait_ticks: 0,
+        };
+        assert_ne!(jt, jt_diff);
+    }
+
+    #[test]
+    fn junction_traversal_wait_ticks_field() {
+        let mut jt = JunctionTraversal {
+            junction_node: 10,
+            turn_index: 0,
+            t: 0.0,
+            lateral_offset: 0.0,
+            speed: 0.0,
+            wait_ticks: 0,
+        };
+
+        // Simulate incrementing wait_ticks
+        for _ in 0..MAX_YIELD_TICKS {
+            jt.wait_ticks += 1;
+        }
+        assert_eq!(jt.wait_ticks, MAX_YIELD_TICKS);
+    }
+
+    #[test]
+    fn junction_traversal_boundary_values() {
+        // t at boundaries
+        let jt_start = JunctionTraversal {
+            junction_node: 0,
+            turn_index: 0,
+            t: 0.0,
+            lateral_offset: 0.0,
+            speed: 0.0,
+            wait_ticks: 0,
+        };
+        let jt_end = JunctionTraversal {
+            junction_node: 0,
+            turn_index: 0,
+            t: 1.0,
+            lateral_offset: 0.0,
+            speed: 0.0,
+            wait_ticks: 0,
+        };
+        assert_ne!(jt_start, jt_end);
+    }
 }

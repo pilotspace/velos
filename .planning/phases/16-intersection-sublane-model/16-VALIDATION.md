@@ -1,10 +1,11 @@
 ---
 phase: 16
 slug: intersection-sublane-model
-status: draft
-nyquist_compliant: false
-wave_0_complete: false
+status: complete
+nyquist_compliant: true
+wave_0_complete: true
 created: 2026-03-09
+audited: 2026-03-10
 ---
 
 # Phase 16 — Validation Strategy
@@ -19,7 +20,7 @@ created: 2026-03-09
 |----------|-------|
 | **Framework** | Rust built-in `#[cfg(test)]` + `cargo test` |
 | **Config file** | Workspace Cargo.toml (already configured) |
-| **Quick run command** | `cargo test -p velos-net --lib junction && cargo test -p velos-vehicle --lib junction_traversal` |
+| **Quick run command** | `cargo test -p velos-net --lib junction && cargo test -p velos-vehicle --lib junction_traversal && cargo test -p velos-gpu --lib -- sim_render sim_junction map_tiles` |
 | **Full suite command** | `cargo test --workspace` |
 | **Estimated runtime** | ~30 seconds |
 
@@ -36,25 +37,33 @@ created: 2026-03-09
 
 ## Per-Task Verification Map
 
-| Task ID | Plan | Wave | Requirement | Test Type | Automated Command | File Exists | Status |
-|---------|------|------|-------------|-----------|-------------------|-------------|--------|
-| 16-01-01 | 01 | 1 | ISL-01 | unit | `cargo test -p velos-vehicle --lib junction_traversal::tests::lateral_offset_preserved -x` | ❌ W0 | ⬜ pending |
-| 16-01-02 | 01 | 1 | ISL-03 | unit | `cargo test -p velos-net --lib junction::tests::bezier_lateral_offset -x` | ❌ W0 | ⬜ pending |
-| 16-01-03 | 01 | 1 | ISL-04 | unit | `cargo test -p velos-vehicle --lib junction_traversal::tests::conflict_priority -x` | ❌ W0 | ⬜ pending |
-| 16-02-01 | 02 | 1 | ISL-02 | unit | `cargo test -p velos-vehicle --lib sublane::tests -x` | ✅ | ⬜ pending |
-| 16-03-01 | 03 | 2 | MAP-01 | unit | `cargo test -p velos-gpu --lib map_tiles::tests::decode_tile -x` | ❌ W0 | ⬜ pending |
-| 16-03-02 | 03 | 2 | MAP-02 | unit | `cargo test -p velos-vehicle --lib junction_traversal::tests::heading_follows_tangent -x` | ❌ W0 | ⬜ pending |
+| Task ID | Plan | Wave | Requirement | Test Type | Automated Command | Test Count | Status |
+|---------|------|------|-------------|-----------|-------------------|------------|--------|
+| 16-01-01 | 01 | 1 | ISL-01 | unit | `cargo test -p velos-net --lib junction::tests` | 27 | ✅ green |
+| 16-01-02 | 01 | 1 | ISL-03 | unit | `cargo test -p velos-net --lib junction::tests::offset_position` | 1 | ✅ green |
+| 16-01-03 | 01 | 1 | ISL-04 | unit | `cargo test -p velos-vehicle --lib junction_traversal::tests::conflict` | 7 | ✅ green |
+| 16-02-01 | 02 | 1 | ISL-02 | unit | `cargo test -p velos-vehicle --lib junction_traversal::tests` | 18 | ✅ green |
+| 16-02-02 | 02 | 1 | ISL-01,ISL-04 | integration | `cargo test -p velos-gpu --lib -- sim_junction` | 10 | ✅ green |
+| 16-03-01 | 03 | 2 | MAP-01 | unit | `cargo test -p velos-gpu --lib -- map_tiles` | 9 | ✅ green |
+| 16-04-01 | 04 | 2 | MAP-02 | unit | `cargo test -p velos-gpu --lib -- sim_render` | 10 | ✅ green |
+| 16-01-ECS | 01 | 1 | ISL-01 | unit | `cargo test -p velos-core --lib -- junction` | 3 | ✅ green |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
+**Total: 77 automated tests across 5 modules — all green**
+
 ---
 
-## Wave 0 Requirements
+## Requirement Coverage Matrix
 
-- [ ] `crates/velos-net/src/junction.rs` — test stubs for ISL-01, ISL-03, ISL-04 (BezierTurn, ConflictPoint)
-- [ ] `crates/velos-vehicle/src/junction_traversal.rs` — test stubs for ISL-01, ISL-04, MAP-02 (traverse, conflict, heading)
-- [ ] `crates/velos-gpu/src/map_tiles.rs` — test stubs for MAP-01 (tile decode + cache)
-- [ ] New workspace dependencies: pmtiles2, mvt-reader, earcutr, flate2, lru
+| Requirement | Description | Test Modules | Status |
+|-------------|-------------|--------------|--------|
+| ISL-01 | Bezier turn paths with lateral offset | velos-net::junction (27), velos-core::components (3), velos-gpu::sim_junction (10) | COVERED |
+| ISL-02 | Sublane traversal / vehicle-type behavior | velos-vehicle::junction_traversal (18), velos-gpu::sim_render (10) | COVERED |
+| ISL-03 | Bezier lateral offset shift | velos-net::junction::offset_position (1) | COVERED |
+| ISL-04 | Conflict priority resolution | velos-vehicle::junction_traversal::conflict_* (7), velos-gpu::sim_junction (10) | COVERED |
+| MAP-01 | Map tile decode + render pipeline | velos-gpu::map_tiles (9) | COVERED |
+| MAP-02 | Heading follows Bezier tangent | velos-gpu::sim_render::heading_from_tangent (3) | COVERED |
 
 ---
 
@@ -70,11 +79,23 @@ created: 2026-03-09
 
 ## Validation Sign-Off
 
-- [ ] All tasks have `<automated>` verify or Wave 0 dependencies
-- [ ] Sampling continuity: no 3 consecutive tasks without automated verify
-- [ ] Wave 0 covers all MISSING references
-- [ ] No watch-mode flags
-- [ ] Feedback latency < 30s
-- [ ] `nyquist_compliant: true` set in frontmatter
+- [x] All tasks have automated verification
+- [x] Sampling continuity: no 3 consecutive tasks without automated verify
+- [x] All requirements have automated coverage (6/6 COVERED)
+- [x] No watch-mode flags
+- [x] Feedback latency < 30s
+- [x] `nyquist_compliant: true` set in frontmatter
 
-**Approval:** pending
+**Approval:** PASSED
+
+---
+
+## Validation Audit 2026-03-10
+
+| Metric | Count |
+|--------|-------|
+| Gaps found | 0 |
+| Resolved | 0 |
+| Escalated | 0 |
+| Total automated tests | 77 |
+| Requirements covered | 6/6 |

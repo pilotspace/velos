@@ -17,4 +17,5 @@ pub mod krauss;
 pub mod mobil;
 pub mod social_force;
 pub mod sublane;
+pub mod junction_traversal;
 pub mod types;

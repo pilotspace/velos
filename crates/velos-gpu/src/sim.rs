@@ -16,6 +16,7 @@ use rand::rngs::StdRng;
 use rand::SeedableRng;
 
 use velos_demand::{OdMatrix, Spawner, TodProfile, Zone};
+use velos_net::junction::JunctionData;
 use velos_net::{RoadGraph, SpatialIndex};
 use velos_signal::detector::LoopDetector;
 use velos_signal::SignalController;
@@ -185,6 +186,9 @@ pub struct SimWorld {
     pub(crate) next_bus_route_index: u8,
     /// Map from GTFS route_id to assigned route_index for consistent coloring.
     pub(crate) gtfs_route_indices: HashMap<String, u8>,
+    /// Precomputed junction geometry for Bezier turn paths and conflict points.
+    /// Keyed by junction node index (u32). Built from `precompute_all_junctions()`.
+    pub junction_data: HashMap<u32, JunctionData>,
 }
 
 impl SimWorld {
@@ -255,6 +259,13 @@ impl SimWorld {
         let edge_count = road_graph.edge_count() as u32;
         let perception_buffers = PerceptionBuffers::new(device, edge_count);
 
+        // Precompute junction geometry for Bezier traversal.
+        let junction_data = velos_net::junction::precompute_all_junctions(&road_graph);
+        log::info!(
+            "Precomputed junction data: {} junctions with Bezier turns",
+            junction_data.len(),
+        );
+
         let mut sim = Self {
             world: World::new(),
             road_graph,
@@ -288,6 +299,7 @@ impl SimWorld {
             prediction_dirty: true,
             next_bus_route_index: 0,
             gtfs_route_indices: HashMap::new(),
+            junction_data,
         };
 
         // Initialize reroute subsystem (builds CCH, prediction service).
@@ -326,6 +338,8 @@ impl SimWorld {
         let loop_detectors =
             sim_startup::build_loop_detectors(&road_graph, &signal_config, &signalized_nodes);
 
+        let junction_data = velos_net::junction::precompute_all_junctions(&road_graph);
+
         Self {
             world: World::new(),
             road_graph,
@@ -359,6 +373,7 @@ impl SimWorld {
             prediction_dirty: true,
             next_bus_route_index: 0,
             gtfs_route_indices: HashMap::new(),
+            junction_data,
         }
     }
 
@@ -482,6 +497,9 @@ impl SimWorld {
         // 6.7. MOBIL lane-change evaluation + lateral drift (CPU, cars)
         self.step_lane_changes(dt);
 
+        // 6.8. Junction traversal: Bezier curve advancement + conflict detection
+        self.step_junction_traversal(dt);
+
         // 7. GPU wave-front car-following physics
         self.step_vehicles_gpu(dt as f32, device, queue, dispatcher);
 
@@ -545,6 +563,9 @@ impl SimWorld {
 
         // 6.7. MOBIL lane-change evaluation (CPU parity with tick_gpu step 6.7)
         self.step_lane_changes(dt);
+
+        // 6.8. Junction traversal: Bezier curve advancement + conflict detection
+        self.step_junction_traversal(dt);
 
         let snapshot = AgentSnapshot::collect(&self.world);
         let spatial = SpatialIndex::from_positions(&snapshot.ids, &snapshot.positions);

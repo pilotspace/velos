@@ -8,8 +8,12 @@
 //!   2. update_instances_typed(queue, motorbikes, cars, pedestrians) -- build per-type arrays
 //!   3. render_frame(encoder, view) -- record per-type draw calls
 
+use std::collections::HashMap;
+
 use crate::camera::Camera2D;
+use crate::map_tiles::MapTileRenderer;
 use bytemuck::{Pod, Zeroable};
+use velos_net::junction::JunctionData;
 use wgpu::util::DeviceExt;
 
 /// Per-instance data uploaded to GPU for each agent.
@@ -119,6 +123,22 @@ struct RoadLineVertex {
     color: [f32; 4],
 }
 
+/// Guide line vertex: position + color + distance along line for dash pattern.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+struct GuideLineVertex {
+    position: [f32; 2],
+    color: [f32; 4],
+    line_dist: f32,
+    _pad: f32,
+}
+
+/// Number of sample points per Bezier curve for guide line generation.
+const GUIDE_LINE_SAMPLES: usize = 20;
+
+/// Half-width of guide line quad strip in metres.
+const GUIDE_LINE_HALF_WIDTH: f32 = 0.5;
+
 /// Per-type instance counts for draw call ranges.
 #[derive(Default, Clone, Copy)]
 struct TypeCounts {
@@ -132,6 +152,7 @@ pub struct Renderer {
     render_pipeline: wgpu::RenderPipeline,
     road_pipeline: wgpu::RenderPipeline,
     camera_bind_group: wgpu::BindGroup,
+    camera_bind_group_layout: wgpu::BindGroupLayout,
     camera_uniform_buffer: wgpu::Buffer,
     triangle_vertex_buffer: wgpu::Buffer,
     rectangle_vertex_buffer: wgpu::Buffer,
@@ -142,6 +163,18 @@ pub struct Renderer {
     road_vertex_buffer: Option<wgpu::Buffer>,
     road_vertex_count: u32,
     pub surface_format: wgpu::TextureFormat,
+    /// Optional map tile background renderer.
+    map_tiles: Option<MapTileRenderer>,
+    /// Pipeline for dashed guide line rendering through junctions.
+    guide_line_pipeline: wgpu::RenderPipeline,
+    /// GPU vertex buffer for guide line quad strips.
+    guide_line_buffer: Option<wgpu::Buffer>,
+    /// Number of vertices in the guide line buffer.
+    guide_line_vertex_count: u32,
+    /// GPU vertex buffer for debug overlay (conflict points as red dots).
+    debug_overlay_buffer: Option<wgpu::Buffer>,
+    /// Number of vertices in the debug overlay buffer.
+    debug_overlay_vertex_count: u32,
 }
 
 impl Renderer {
@@ -305,7 +338,64 @@ impl Renderer {
                 usage: wgpu::BufferUsages::VERTEX,
             });
 
-        let instance_capacity = 8192_u32;
+        // Guide line pipeline (TriangleList topology for quad strips, alpha blending).
+        let guide_line_shader =
+            device.create_shader_module(wgpu::include_wgsl!("../shaders/guide_line.wgsl"));
+        let guide_line_vertex_layout = wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<GuideLineVertex>() as u64,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &[
+                wgpu::VertexAttribute {
+                    offset: 0,
+                    shader_location: 0,
+                    format: wgpu::VertexFormat::Float32x2,
+                },
+                wgpu::VertexAttribute {
+                    offset: 8,
+                    shader_location: 1,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                wgpu::VertexAttribute {
+                    offset: 24,
+                    shader_location: 2,
+                    format: wgpu::VertexFormat::Float32,
+                },
+            ],
+        };
+        let guide_line_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("guide_line_pipeline"),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &guide_line_shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[guide_line_vertex_layout],
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &guide_line_shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: surface_format,
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: Default::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    strip_index_format: None,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+                cache: None,
+            });
+
+        let instance_capacity = 300_000_u32;
         let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("instance_buffer"),
             size: (instance_capacity as usize * std::mem::size_of::<AgentInstance>()) as u64,
@@ -317,6 +407,7 @@ impl Renderer {
             render_pipeline,
             road_pipeline,
             camera_bind_group,
+            camera_bind_group_layout,
             camera_uniform_buffer,
             triangle_vertex_buffer,
             rectangle_vertex_buffer,
@@ -327,6 +418,12 @@ impl Renderer {
             road_vertex_buffer: None,
             road_vertex_count: 0,
             surface_format,
+            map_tiles: None,
+            guide_line_pipeline,
+            guide_line_buffer: None,
+            guide_line_vertex_count: 0,
+            debug_overlay_buffer: None,
+            debug_overlay_vertex_count: 0,
         }
     }
 
@@ -447,17 +544,40 @@ impl Renderer {
         }
     }
 
-    /// Record the render pass with per-type draw calls.
+    /// Record the render pass with per-type draw calls and optional overlays.
     ///
     /// Issues 3 draw calls, one per shape type:
     /// 1. Triangle vertex buffer for motorbike instances
     /// 2. Rectangle vertex buffer for car instances
     /// 3. Dot vertex buffer for pedestrian instances
+    ///
+    /// When `show_guide_lines` is true, renders dashed Bezier guide lines.
+    /// When `show_conflict_debug` is true, renders conflict crossing points.
     pub fn render_frame(
         &self,
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
+        show_guide_lines: bool,
+        show_conflict_debug: bool,
     ) {
+        // Render map tiles first (clears the screen).
+        // If map tiles exist, agents render on top with LoadOp::Load.
+        let has_map_tiles = self.map_tiles.is_some();
+        if let Some(ref mt) = self.map_tiles {
+            mt.render(encoder, view, &self.camera_bind_group);
+        }
+
+        let load_op = if has_map_tiles {
+            wgpu::LoadOp::Load
+        } else {
+            wgpu::LoadOp::Clear(wgpu::Color {
+                r: 0.05,
+                g: 0.05,
+                b: 0.1,
+                a: 1.0,
+            })
+        };
+
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("agent_render_pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -465,12 +585,7 @@ impl Renderer {
                 resolve_target: None,
                 depth_slice: None,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color {
-                        r: 0.05,
-                        g: 0.05,
-                        b: 0.1,
-                        a: 1.0,
-                    }),
+                    load: load_op,
                     store: wgpu::StoreOp::Store,
                 },
             })],
@@ -524,6 +639,253 @@ impl Renderer {
                 instance_offset..instance_offset + tc.pedestrian_count,
             );
         }
+
+        // Draw guide lines (dashed Bezier paths through junctions).
+        if show_guide_lines
+            && let Some(ref buf) = self.guide_line_buffer
+            && self.guide_line_vertex_count > 0
+        {
+            pass.set_pipeline(&self.guide_line_pipeline);
+            pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            pass.set_vertex_buffer(0, buf.slice(..));
+            pass.draw(0..self.guide_line_vertex_count, 0..1);
+        }
+
+        // Draw debug overlay (conflict crossing points as red dots).
+        // Reuses guide_line_pipeline (same vertex format, solid color with no dash).
+        if show_conflict_debug
+            && let Some(ref buf) = self.debug_overlay_buffer
+            && self.debug_overlay_vertex_count > 0
+        {
+            pass.set_pipeline(&self.guide_line_pipeline);
+            pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            pass.set_vertex_buffer(0, buf.slice(..));
+            pass.draw(0..self.debug_overlay_vertex_count, 0..1);
+        }
+    }
+
+    /// Set the map tile renderer for background tile rendering.
+    pub fn set_map_tiles(&mut self, renderer: MapTileRenderer) {
+        self.map_tiles = Some(renderer);
+    }
+
+    /// Initialize map tile renderer from a PMTiles file path.
+    ///
+    /// If path is None or file not found, map tiles are silently disabled.
+    pub fn init_map_tiles(&mut self, device: &wgpu::Device, pmtiles_path: Option<&std::path::Path>) {
+        let renderer = MapTileRenderer::new(
+            device,
+            self.surface_format,
+            &self.camera_bind_group_layout,
+            pmtiles_path,
+        );
+        self.map_tiles = Some(renderer);
+    }
+
+    /// Update map tiles based on current camera viewport.
+    /// Call before `render_frame()`.
+    pub fn update_map_tiles(&mut self, camera: &Camera2D, device: &wgpu::Device) {
+        if let Some(ref mut mt) = self.map_tiles {
+            mt.update(camera, device);
+        }
+    }
+
+    /// Upload guide line geometry for all junction Bezier turns.
+    ///
+    /// Generates thin quad strips (~0.5m width) sampling each Bezier curve
+    /// at ~20 points. Semi-transparent white color. Call once after junction
+    /// data is precomputed.
+    pub fn update_guide_lines(
+        &mut self,
+        device: &wgpu::Device,
+        junction_data: &HashMap<u32, JunctionData>,
+    ) {
+        let color = [1.0_f32, 1.0, 1.0, 0.3]; // semi-transparent white
+        let mut vertices: Vec<GuideLineVertex> = Vec::new();
+
+        // Deduplicate: merged junction clusters share the same JunctionData
+        // across multiple node keys. Track seen (entry_edge, exit_edge) pairs
+        // to avoid rendering the same Bezier curve multiple times.
+        let mut seen_turns: std::collections::HashSet<(u32, u32)> =
+            std::collections::HashSet::new();
+
+        for jd in junction_data.values() {
+            for turn in &jd.turns {
+                // Skip degenerate arcs (already filtered in precompute, but safety net).
+                if turn.arc_length < 1.0 {
+                    continue;
+                }
+                // Skip duplicate turns from merged clusters
+                if !seen_turns.insert((turn.entry_edge, turn.exit_edge)) {
+                    continue;
+                }
+
+                let inv = 1.0 / GUIDE_LINE_SAMPLES as f64;
+                let mut cumulative_dist = 0.0_f32;
+                let mut prev_pos = turn.position(0.0);
+
+                for i in 1..=GUIDE_LINE_SAMPLES {
+                    let t = i as f64 * inv;
+                    let cur_pos = turn.position(t);
+                    let dx = cur_pos[0] - prev_pos[0];
+                    let dy = cur_pos[1] - prev_pos[1];
+                    let seg_len = (dx * dx + dy * dy).sqrt() as f32;
+
+                    // Tangent for perpendicular offset
+                    let tan = turn.tangent(t - 0.5 * inv);
+                    let tan_len = (tan[0] * tan[0] + tan[1] * tan[1]).sqrt().max(1e-6);
+                    let nx = (-tan[1] / tan_len) as f32;
+                    let ny = (tan[0] / tan_len) as f32;
+
+                    let p0 = [prev_pos[0] as f32, prev_pos[1] as f32];
+                    let p1 = [cur_pos[0] as f32, cur_pos[1] as f32];
+                    let hw = GUIDE_LINE_HALF_WIDTH;
+
+                    let dist0 = cumulative_dist;
+                    cumulative_dist += seg_len;
+                    let dist1 = cumulative_dist;
+
+                    // Two triangles forming a quad between prev and cur positions
+                    // Left side: pos + normal * hw, Right side: pos - normal * hw
+                    let v00 = GuideLineVertex {
+                        position: [p0[0] + nx * hw, p0[1] + ny * hw],
+                        color,
+                        line_dist: dist0,
+                        _pad: 0.0,
+                    };
+                    let v01 = GuideLineVertex {
+                        position: [p0[0] - nx * hw, p0[1] - ny * hw],
+                        color,
+                        line_dist: dist0,
+                        _pad: 0.0,
+                    };
+                    let v10 = GuideLineVertex {
+                        position: [p1[0] + nx * hw, p1[1] + ny * hw],
+                        color,
+                        line_dist: dist1,
+                        _pad: 0.0,
+                    };
+                    let v11 = GuideLineVertex {
+                        position: [p1[0] - nx * hw, p1[1] - ny * hw],
+                        color,
+                        line_dist: dist1,
+                        _pad: 0.0,
+                    };
+
+                    // Triangle 1: v00, v01, v10
+                    vertices.push(v00);
+                    vertices.push(v01);
+                    vertices.push(v10);
+                    // Triangle 2: v01, v11, v10
+                    vertices.push(v01);
+                    vertices.push(v11);
+                    vertices.push(v10);
+
+                    prev_pos = cur_pos;
+                }
+            }
+        }
+
+        self.guide_line_vertex_count = vertices.len() as u32;
+        if !vertices.is_empty() {
+            self.guide_line_buffer = Some(device.create_buffer_init(
+                &wgpu::util::BufferInitDescriptor {
+                    label: Some("guide_line_vertices"),
+                    contents: bytemuck::cast_slice(&vertices),
+                    usage: wgpu::BufferUsages::VERTEX,
+                },
+            ));
+        }
+        log::info!(
+            "Uploaded {} guide line vertices ({} junctions)",
+            vertices.len(),
+            junction_data.len(),
+        );
+    }
+
+    /// Upload debug overlay geometry: conflict crossing points as red dots.
+    ///
+    /// Each conflict point is rendered as a small red quad (2m x 2m) at
+    /// the world position where two Bezier turns cross.
+    pub fn update_debug_overlay(
+        &mut self,
+        device: &wgpu::Device,
+        junction_data: &HashMap<u32, JunctionData>,
+    ) {
+        let red = [1.0_f32, 0.0, 0.0, 0.8];
+        let dot_size = 1.0_f32; // half-size of conflict dot quad
+
+        let mut vertices: Vec<GuideLineVertex> = Vec::new();
+        // Deduplicate conflict points from merged junction clusters
+        let mut seen_conflicts: std::collections::HashSet<(u32, u32, u32, u32)> =
+            std::collections::HashSet::new();
+
+        for jd in junction_data.values() {
+            for cp in &jd.conflicts {
+                // Use turn edge pairs as dedup key
+                let key = (
+                    jd.turns.get(cp.turn_a_idx as usize).map(|t| t.entry_edge).unwrap_or(u32::MAX),
+                    jd.turns.get(cp.turn_a_idx as usize).map(|t| t.exit_edge).unwrap_or(u32::MAX),
+                    jd.turns.get(cp.turn_b_idx as usize).map(|t| t.entry_edge).unwrap_or(u32::MAX),
+                    jd.turns.get(cp.turn_b_idx as usize).map(|t| t.exit_edge).unwrap_or(u32::MAX),
+                );
+                if !seen_conflicts.insert(key) {
+                    continue;
+                }
+                let turn_a = match jd.turns.get(cp.turn_a_idx as usize) {
+                    Some(t) => t,
+                    None => continue,
+                };
+                let turn_b = match jd.turns.get(cp.turn_b_idx as usize) {
+                    Some(t) => t,
+                    None => continue,
+                };
+
+                // Average position of the two crossing points for the dot location
+                let pa = turn_a.position(cp.t_a as f64);
+                let pb = turn_b.position(cp.t_b as f64);
+                let cx = ((pa[0] + pb[0]) / 2.0) as f32;
+                let cy = ((pa[1] + pb[1]) / 2.0) as f32;
+
+                // Small quad (two triangles) at the conflict point
+                let s = dot_size;
+                let base = GuideLineVertex {
+                    position: [0.0, 0.0],
+                    color: red,
+                    line_dist: 0.0, // no dash pattern for dots
+                    _pad: 0.0,
+                };
+                let mut v = [base; 6];
+                v[0].position = [cx - s, cy - s];
+                v[1].position = [cx + s, cy - s];
+                v[2].position = [cx + s, cy + s];
+                v[3].position = [cx - s, cy - s];
+                v[4].position = [cx + s, cy + s];
+                v[5].position = [cx - s, cy + s];
+                vertices.extend_from_slice(&v);
+            }
+        }
+
+        self.debug_overlay_vertex_count = vertices.len() as u32;
+        if !vertices.is_empty() {
+            self.debug_overlay_buffer = Some(device.create_buffer_init(
+                &wgpu::util::BufferInitDescriptor {
+                    label: Some("debug_overlay_vertices"),
+                    contents: bytemuck::cast_slice(&vertices),
+                    usage: wgpu::BufferUsages::VERTEX,
+                },
+            ));
+        }
+        log::info!(
+            "Uploaded {} debug overlay vertices ({} conflict points)",
+            vertices.len(),
+            vertices.len() / 6,
+        );
+    }
+
+    /// Returns the camera bind group layout for sharing with other pipelines.
+    pub fn camera_bind_group_layout(&self) -> &wgpu::BindGroupLayout {
+        &self.camera_bind_group_layout
     }
 
     /// Total instance count across all types.

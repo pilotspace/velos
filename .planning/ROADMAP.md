@@ -39,7 +39,7 @@
 
 **Milestone Goal:** Complete the digital twin loop with intersection sublane correctness, real-world camera detection ingestion for demand calibration, and 3D native city visualization with agent rendering.
 
-- [ ] **Phase 16: Intersection Sublane Model & 2D Map Tiles** - Sublane through junctions, conflict detection, 2D vector map tile background, sublane visualization
+- [x] **Phase 16: Intersection Sublane Model & 2D Map Tiles** - Sublane through junctions, conflict detection, 2D vector map tile background, sublane visualization (completed 2026-03-09)
 - [ ] **Phase 17: Detection Ingestion & Demand Calibration** - gRPC detection service with camera registration, count/speed aggregation, batch demand adjustment, and client SDKs
 - [ ] **Phase 18: 3D Rendering Core** - Perspective camera, depth buffer, 3D roads, LOD agents, day/night lighting, 2D/3D toggle
 - [ ] **Phase 19: 3D City Scene** - OSM building extrusions and SRTM DEM terrain rendering
@@ -150,7 +150,7 @@ Phase 16 first (foundation). Phases 17 + 18 in parallel after 16. Phase 19 after
 | 13. Final Integration Wiring & GPU Transfer Audit | v1.1 | 3/3 | Complete | 2026-03-08 |
 | 14. Wire GTFS → Bus Stops Pipeline | v1.1 | 2/2 | Complete | 2026-03-08 |
 | 15. File Size Reduction & Housekeeping | v1.1 | 3/3 | Complete | 2026-03-08 |
-| 16. Intersection Sublane Model | v1.2 | 0/? | Not started | - |
+| 16. Intersection Sublane Model | 4/4 | Complete   | 2026-03-09 | - |
 | 17. Detection Ingestion & Demand Calibration | v1.2 | 0/? | Not started | - |
 | 18. 3D Rendering Core | v1.2 | 0/? | Not started | - |
 | 19. 3D City Scene | v1.2 | 0/? | Not started | - |

@@ -3,12 +3,43 @@
 use petgraph::visit::EdgeRef;
 use petgraph::Direction;
 
-use velos_core::components::{CarFollowingModel, Kinematics, Position, VehicleType, WaitState};
+use velos_core::components::{
+    CarFollowingModel, JunctionTraversal, Kinematics, Position, VehicleType, WaitState,
+};
 use velos_signal::plan::PhaseState;
 use velos_vehicle::bus::BusState;
 
 use crate::renderer::AgentInstance;
 use crate::sim::SimWorld;
+
+/// Return the standard display color for a given vehicle type.
+///
+/// Per CONTEXT.md locked decisions:
+///   Motorbike=orange, Car=blue, Bus=green (route override), Truck=red,
+///   Emergency=white, Bicycle=yellow, Pedestrian=light grey.
+pub fn vehicle_type_color(vtype: VehicleType) -> [f32; 4] {
+    match vtype {
+        VehicleType::Motorbike => [1.0, 0.6, 0.0, 1.0],
+        VehicleType::Car => [0.2, 0.4, 1.0, 1.0],
+        VehicleType::Bus => [0.2, 0.8, 0.2, 1.0],
+        VehicleType::Truck => [0.9, 0.2, 0.2, 1.0],
+        VehicleType::Emergency => [1.0, 1.0, 1.0, 1.0],
+        VehicleType::Bicycle => [0.9, 0.9, 0.2, 1.0],
+        VehicleType::Pedestrian => [0.9, 0.9, 0.9, 1.0],
+    }
+}
+
+/// Compute heading from a Bezier tangent vector. Returns atan2(dy, dx).
+///
+/// Falls back to `fallback` if the tangent produces a non-finite heading.
+pub fn heading_from_tangent(tangent: [f64; 2], fallback: f32) -> f32 {
+    let heading = tangent[1].atan2(tangent[0]);
+    if heading.is_finite() {
+        heading as f32
+    } else {
+        fallback
+    }
+}
 
 /// Distinct colors for up to 8 bus routes, then wraps.
 const BUS_ROUTE_COLORS: [[f32; 4]; 8] = [
@@ -24,6 +55,13 @@ const BUS_ROUTE_COLORS: [[f32; 4]; 8] = [
 
 impl SimWorld {
     /// Build per-type instance arrays for rendering.
+    ///
+    /// Vehicle-type coloring (ISL-02 locked decisions):
+    ///   Motorbike: orange, Car: blue, Bus: green, Truck: red,
+    ///   Emergency: white, Bicycle: yellow, Pedestrian: light grey.
+    ///
+    /// Agents in junctions use Bezier tangent heading (B'(t) = 2(1-t)(P1-P0) + 2t(P2-P1))
+    /// instead of kinematic heading, so they visually rotate to follow curves.
     pub fn build_instances(
         &self,
     ) -> (Vec<AgentInstance>, Vec<AgentInstance>, Vec<AgentInstance>) {
@@ -31,7 +69,7 @@ impl SimWorld {
         let mut cars = Vec::new();
         let mut pedestrians = Vec::new();
 
-        for (pos, kin, vtype, ws, cf_model, bus_state) in self
+        for (pos, kin, vtype, _ws, _cf_model, bus_state, jt) in self
             .world
             .query::<(
                 &Position,
@@ -40,49 +78,35 @@ impl SimWorld {
                 Option<&WaitState>,
                 Option<&CarFollowingModel>,
                 Option<&BusState>,
+                Option<&JunctionTraversal>,
             )>()
             .iter()
         {
-            // Position already includes lateral offset (applied in tick).
-            // Color-code by car-following model:
-            //   IDM: original colors (green/blue)
-            //   Krauss: orange/amber tones
-            let is_krauss = cf_model == Some(&CarFollowingModel::Krauss);
-            let color = match *vtype {
-                VehicleType::Motorbike => {
-                    let at_red = ws.map(|w| w.at_red_signal).unwrap_or(false);
-                    if is_krauss {
-                        if at_red {
-                            [1.0, 0.7, 0.2, 1.0] // bright orange: Krauss swarming
-                        } else {
-                            [0.9, 0.6, 0.1, 1.0] // orange: Krauss motorbike
-                        }
-                    } else if at_red {
-                        [0.4, 1.0, 0.5, 1.0] // brighter green: IDM swarming
-                    } else {
-                        [0.2, 0.8, 0.4, 1.0] // normal green: IDM motorbike
-                    }
-                }
-                VehicleType::Car => {
-                    if is_krauss {
-                        [0.9, 0.5, 0.1, 1.0] // orange: Krauss car
-                    } else {
-                        [0.2, 0.4, 0.9, 1.0] // blue: IDM car
-                    }
-                }
-                VehicleType::Bus => {
-                    let ri = bus_state.map(|bs| bs.route_index()).unwrap_or(0);
-                    BUS_ROUTE_COLORS[ri as usize % BUS_ROUTE_COLORS.len()]
-                }
-                VehicleType::Bicycle => [0.0, 0.9, 0.9, 1.0],     // cyan
-                VehicleType::Truck => [0.6, 0.4, 0.2, 1.0],       // brown
-                VehicleType::Emergency => [1.0, 0.0, 0.0, 1.0],   // red
-                VehicleType::Pedestrian => [0.9, 0.9, 0.9, 1.0],
+            // Bug 7 fix: skip agents with NaN/Inf positions
+            if !pos.x.is_finite() || !pos.y.is_finite() {
+                log::warn!("Skipping agent with non-finite position: ({}, {})", pos.x, pos.y);
+                continue;
+            }
+
+            // Vehicle-type coloring per CONTEXT.md locked decisions.
+            // Buses use per-route color; all others use standard vehicle_type_color.
+            let color = if *vtype == VehicleType::Bus {
+                let ri = bus_state.map(|bs| bs.route_index()).unwrap_or(0);
+                BUS_ROUTE_COLORS[ri as usize % BUS_ROUTE_COLORS.len()]
+            } else {
+                vehicle_type_color(*vtype)
+            };
+
+            // Bezier tangent heading for junction agents.
+            let heading = if let Some(jt) = jt {
+                self.junction_heading(jt)
+            } else {
+                kin.heading as f32
             };
 
             let instance = AgentInstance {
                 position: [pos.x as f32, pos.y as f32],
-                heading: kin.heading as f32,
+                heading,
                 _pad: 0.0,
                 color,
             };
@@ -95,6 +119,19 @@ impl SimWorld {
         }
 
         (motorbikes, cars, pedestrians)
+    }
+
+    /// Compute heading from Bezier tangent for an agent traversing a junction.
+    ///
+    /// Falls back to 0.0 if the junction data is missing or the tangent is degenerate.
+    fn junction_heading(&self, jt: &JunctionTraversal) -> f32 {
+        if let Some(jd) = self.junction_data.get(&jt.junction_node)
+            && let Some(turn) = jd.turns.get(jt.turn_index as usize)
+        {
+            let tan = turn.tangent(jt.t);
+            return heading_from_tangent(tan, 0.0);
+        }
+        0.0
     }
 
     /// Build signal indicator instances for rendering at signalized intersections.
@@ -172,5 +209,74 @@ impl SimWorld {
             ((min_x + max_x) / 2.0) as f32,
             ((min_y + max_y) / 2.0) as f32,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::f64::consts::FRAC_PI_4;
+
+    #[test]
+    fn vehicle_type_color_motorbike_orange() {
+        let c = vehicle_type_color(VehicleType::Motorbike);
+        assert_eq!(c, [1.0, 0.6, 0.0, 1.0]);
+    }
+
+    #[test]
+    fn vehicle_type_color_car_blue() {
+        let c = vehicle_type_color(VehicleType::Car);
+        assert_eq!(c, [0.2, 0.4, 1.0, 1.0]);
+    }
+
+    #[test]
+    fn vehicle_type_color_bus_green() {
+        let c = vehicle_type_color(VehicleType::Bus);
+        assert_eq!(c, [0.2, 0.8, 0.2, 1.0]);
+    }
+
+    #[test]
+    fn vehicle_type_color_truck_red() {
+        let c = vehicle_type_color(VehicleType::Truck);
+        assert_eq!(c, [0.9, 0.2, 0.2, 1.0]);
+    }
+
+    #[test]
+    fn vehicle_type_color_emergency_white() {
+        let c = vehicle_type_color(VehicleType::Emergency);
+        assert_eq!(c, [1.0, 1.0, 1.0, 1.0]);
+    }
+
+    #[test]
+    fn vehicle_type_color_bicycle_yellow() {
+        let c = vehicle_type_color(VehicleType::Bicycle);
+        assert_eq!(c, [0.9, 0.9, 0.2, 1.0]);
+    }
+
+    #[test]
+    fn vehicle_type_color_pedestrian_grey() {
+        let c = vehicle_type_color(VehicleType::Pedestrian);
+        assert_eq!(c, [0.9, 0.9, 0.9, 1.0]);
+    }
+
+    #[test]
+    fn heading_from_tangent_east() {
+        // Tangent pointing east: atan2(0, 1) = 0
+        let h = heading_from_tangent([1.0, 0.0], -999.0);
+        assert!((h - 0.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn heading_from_tangent_northeast() {
+        // Tangent pointing NE: atan2(1, 1) = pi/4
+        let h = heading_from_tangent([1.0, 1.0], -999.0);
+        assert!((h - FRAC_PI_4 as f32).abs() < 1e-5);
+    }
+
+    #[test]
+    fn heading_from_tangent_degenerate_uses_fallback() {
+        // Zero tangent: atan2(0, 0) = 0 on most platforms, but let's test NaN explicitly
+        let h = heading_from_tangent([f64::NAN, 0.0], 42.0);
+        assert_eq!(h, 42.0);
     }
 }
