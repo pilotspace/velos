@@ -4,6 +4,7 @@
 pub mod app;
 pub mod buffers;
 pub mod camera;
+pub mod orbit_camera;
 pub mod compute;
 mod compute_wave_front;
 pub mod device;
