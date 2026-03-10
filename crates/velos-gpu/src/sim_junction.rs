@@ -403,7 +403,9 @@ impl SimWorld {
                         rp.lane = 0;
                     }
 
-                    self.update_agent_state(entity, speed);
+                    // Position already set from Bezier(t=1.0) in Phase 4 — do NOT
+                    // call update_agent_state which would overwrite it with edge-
+                    // interpolated position causing a 1-frame flicker.
                     self.update_wait_state(entity, speed, false);
                     return;
                 }
@@ -431,7 +433,7 @@ impl SimWorld {
             rp.offset_m = exit_info.1 + overflow_m;
             rp.lane = 0;
         }
-        self.update_agent_state(entity, speed);
+        // Position already set from Bezier — skip update_agent_state.
         self.update_wait_state(entity, speed, false);
     }
 
