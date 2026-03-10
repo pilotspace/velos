@@ -27,7 +27,7 @@ mod sim_helpers;
 mod sim_junction;
 mod sim_mobil;
 mod sim_lifecycle;
-mod sim_render;
+pub mod sim_render;
 mod sim_bus;
 pub mod sim_meso;
 mod sim_pedestrians;

@@ -1,5 +1,7 @@
 //! Rendering helpers for SimWorld: instance building, signals, road lines.
 
+use std::collections::HashMap;
+
 use petgraph::visit::EdgeRef;
 use petgraph::Direction;
 
@@ -12,6 +14,8 @@ use velos_vehicle::bus::BusState;
 use velos_api::Camera;
 use velos_net::EquirectangularProjection;
 
+use crate::lod::{classify_lod, LodTier};
+use crate::orbit_camera::{BillboardInstance3D, MeshInstance3D};
 use crate::renderer::{AgentInstance, GuideLineVertex};
 use crate::sim::SimWorld;
 
@@ -431,6 +435,55 @@ pub fn build_speed_overlay_vertices(
     vertices
 }
 
+/// Classified agent instances for 3D LOD rendering.
+///
+/// Contains per-vehicle-type instance buffers for each LOD tier.
+pub struct LodBuffers {
+    /// Mesh-tier instances (nearest agents, < 50m).
+    pub mesh_instances: HashMap<VehicleType, Vec<MeshInstance3D>>,
+    /// Billboard-tier instances (mid-range, 50-200m).
+    pub billboard_instances: HashMap<VehicleType, Vec<BillboardInstance3D>>,
+    /// Dot-tier agent count (far range, > 200m) -- rendered via existing 2D pipeline.
+    pub dot_count: u32,
+}
+
+impl LodBuffers {
+    /// Create empty LOD buffers.
+    pub fn empty() -> Self {
+        Self {
+            mesh_instances: HashMap::new(),
+            billboard_instances: HashMap::new(),
+            dot_count: 0,
+        }
+    }
+
+    /// Total number of mesh-tier instances across all vehicle types.
+    pub fn total_mesh_count(&self) -> u32 {
+        self.mesh_instances.values().map(|v| v.len() as u32).sum()
+    }
+
+    /// Total number of billboard-tier instances across all vehicle types.
+    pub fn total_billboard_count(&self) -> u32 {
+        self.billboard_instances
+            .values()
+            .map(|v| v.len() as u32)
+            .sum()
+    }
+}
+
+/// Vehicle dimensions (width, length, height) in metres for 3D rendering.
+fn vehicle_dimensions(vtype: VehicleType) -> (f32, f32, f32) {
+    match vtype {
+        VehicleType::Motorbike => (0.8, 2.0, 1.2),
+        VehicleType::Car => (1.8, 4.5, 1.5),
+        VehicleType::Bus => (2.5, 12.0, 3.5),
+        VehicleType::Truck => (2.5, 8.0, 3.0),
+        VehicleType::Emergency => (1.8, 4.5, 1.8),
+        VehicleType::Bicycle => (0.6, 1.8, 1.0),
+        VehicleType::Pedestrian => (0.5, 0.5, 1.7),
+    }
+}
+
 impl SimWorld {
     /// Build per-type instance arrays for rendering.
     ///
@@ -497,6 +550,94 @@ impl SimWorld {
         }
 
         (motorbikes, cars, pedestrians)
+    }
+
+    /// Build 3D LOD-classified instance arrays for perspective rendering.
+    ///
+    /// Maps 2D positions (x, y) to 3D world (x, 0, y) and classifies agents
+    /// into mesh/billboard/dot tiers based on distance from `eye`.
+    ///
+    /// Does NOT modify existing `build_instances()` -- that remains for 2D mode.
+    pub fn build_instances_3d(&self, eye: glam::Vec3) -> LodBuffers {
+        let mut mesh_instances: HashMap<VehicleType, Vec<MeshInstance3D>> = HashMap::new();
+        let mut billboard_instances: HashMap<VehicleType, Vec<BillboardInstance3D>> =
+            HashMap::new();
+        let mut dot_count: u32 = 0;
+
+        for (pos, kin, vtype, _ws, _cf_model, bus_state, jt) in self
+            .world
+            .query::<(
+                &Position,
+                &Kinematics,
+                &VehicleType,
+                Option<&WaitState>,
+                Option<&CarFollowingModel>,
+                Option<&BusState>,
+                Option<&JunctionTraversal>,
+            )>()
+            .iter()
+        {
+            // Skip agents with NaN/Inf positions
+            if !pos.x.is_finite() || !pos.y.is_finite() {
+                continue;
+            }
+
+            // Map 2D (x, y) to 3D (x, 0, y) -- Y-up coordinate convention
+            let world_pos_3d = glam::Vec3::new(pos.x as f32, 0.0, pos.y as f32);
+            let distance = world_pos_3d.distance(eye);
+
+            // Classify LOD tier (no hysteresis for now -- stateless per-frame)
+            let tier = classify_lod(distance, None);
+
+            // Vehicle-type coloring (same logic as 2D)
+            let color = if *vtype == VehicleType::Bus {
+                let ri = bus_state.map(|bs| bs.route_index()).unwrap_or(0);
+                BUS_ROUTE_COLORS[ri as usize % BUS_ROUTE_COLORS.len()]
+            } else {
+                vehicle_type_color(*vtype)
+            };
+
+            // Bezier tangent heading for junction agents
+            let heading = if let Some(jt) = jt {
+                self.junction_heading(jt)
+            } else {
+                kin.heading as f32
+            };
+
+            match tier {
+                LodTier::Mesh => {
+                    mesh_instances
+                        .entry(*vtype)
+                        .or_default()
+                        .push(MeshInstance3D {
+                            world_pos: world_pos_3d.into(),
+                            heading,
+                            color,
+                        });
+                }
+                LodTier::Billboard => {
+                    let (w, _l, h) = vehicle_dimensions(*vtype);
+                    billboard_instances
+                        .entry(*vtype)
+                        .or_default()
+                        .push(BillboardInstance3D {
+                            world_pos: world_pos_3d.into(),
+                            size: [w, h],
+                            color,
+                            _pad: 0.0,
+                        });
+                }
+                LodTier::Dot => {
+                    dot_count += 1;
+                }
+            }
+        }
+
+        LodBuffers {
+            mesh_instances,
+            billboard_instances,
+            dot_count,
+        }
     }
 
     /// Compute heading from Bezier tangent for an agent traversing a junction.
@@ -840,5 +981,62 @@ mod tests {
         // Color should be between yellow and green (35 km/h)
         let color = verts[0].color;
         assert!(color[1] > 0.5, "green channel should be significant at 35 km/h");
+    }
+
+    // --- build_instances_3d tests ---
+
+    #[test]
+    fn lod_buffers_empty_has_zero_counts() {
+        let buffers = LodBuffers::empty();
+        assert_eq!(buffers.total_mesh_count(), 0);
+        assert_eq!(buffers.total_billboard_count(), 0);
+        assert_eq!(buffers.dot_count, 0);
+    }
+
+    #[test]
+    fn vehicle_dimensions_motorbike() {
+        let (w, l, h) = vehicle_dimensions(VehicleType::Motorbike);
+        assert!((w - 0.8).abs() < 0.01);
+        assert!((l - 2.0).abs() < 0.01);
+        assert!((h - 1.2).abs() < 0.01);
+    }
+
+    #[test]
+    fn vehicle_dimensions_bus_large() {
+        let (w, l, h) = vehicle_dimensions(VehicleType::Bus);
+        assert!(l > 10.0, "Bus should be > 10m long");
+        assert!(h > 3.0, "Bus should be > 3m tall");
+        assert!(w > 2.0, "Bus should be > 2m wide");
+    }
+
+    #[test]
+    fn coordinate_mapping_2d_to_3d() {
+        // 2D (100.0, 200.0) should map to 3D (100.0, 0.0, 200.0)
+        let pos_2d = (100.0_f32, 200.0_f32);
+        let pos_3d = glam::Vec3::new(pos_2d.0, 0.0, pos_2d.1);
+        assert_eq!(pos_3d.x, 100.0);
+        assert_eq!(pos_3d.y, 0.0);
+        assert_eq!(pos_3d.z, 200.0);
+    }
+
+    #[test]
+    fn lod_classification_mesh_tier_at_30m() {
+        use crate::lod::classify_lod;
+        let tier = classify_lod(30.0, None);
+        assert_eq!(tier, crate::lod::LodTier::Mesh);
+    }
+
+    #[test]
+    fn lod_classification_billboard_tier_at_100m() {
+        use crate::lod::classify_lod;
+        let tier = classify_lod(100.0, None);
+        assert_eq!(tier, crate::lod::LodTier::Billboard);
+    }
+
+    #[test]
+    fn lod_classification_dot_tier_at_300m() {
+        use crate::lod::classify_lod;
+        let tier = classify_lod(300.0, None);
+        assert_eq!(tier, crate::lod::LodTier::Dot);
     }
 }
