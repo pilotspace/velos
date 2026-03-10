@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Digital Twin
 status: in_progress
-stopped_at: Completed 18-01-PLAN.md
-last_updated: "2026-03-10T15:58:35Z"
-last_activity: 2026-03-10 -- Phase 18 Plan 01 complete (OrbitCamera, Renderer3D scaffold, ground plane)
+stopped_at: Completed 18-02-PLAN.md
+last_updated: "2026-03-10T16:06:11Z"
+last_activity: 2026-03-10 -- Phase 18 Plan 02 complete (road surface polygons, lane markings, junction fills)
 progress:
   total_phases: 5
   completed_phases: 2
   total_plans: 12
-  completed_plans: 9
-  percent: 75
+  completed_plans: 10
+  percent: 83
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-03-09)
 ## Current Position
 
 Phase: 18 of 20 (3D Rendering Core) -- IN PROGRESS
-Plan: 1 of 4 in current phase (complete)
-Status: Plan 01 complete, ready for Plan 02
-Last activity: 2026-03-10 -- Phase 18 Plan 01 complete (OrbitCamera, Renderer3D scaffold, ground plane)
+Plan: 2 of 4 in current phase (complete)
+Status: Plan 02 complete, ready for Plan 03
+Last activity: 2026-03-10 -- Phase 18 Plan 02 complete (road surface polygons, lane markings, junction fills)
 
-Progress: [███░░░░░░░] 25% (Phase 18)
+Progress: [█████░░░░░] 50% (Phase 18)
 
 ## Accumulated Context
 
@@ -39,6 +39,10 @@ Progress: [███░░░░░░░] 25% (Phase 18)
 Decisions are logged in PROJECT.md Key Decisions table.
 Recent decisions affecting current work:
 
+- [18-02]: Road surface shader reuses ground_plane vertex layout (position vec3 + color vec4 = 28 bytes)
+- [18-02]: Alpha blending on road pipeline for semi-transparent lane marking colors
+- [18-02]: Y-offset layering: road=0.0, junction=0.005, marking=0.01 prevents z-fighting
+- [18-02]: Separate render pass for road geometry (Load existing color/depth from ground pass)
 - [18-01]: Renderer3D fully independent of existing 2D Renderer (no shared state)
 - [18-01]: Camera bind group layout uses VERTEX|FRAGMENT visibility for future lighting
 - [18-01]: Ground plane at y=-0.01 to prevent z-fighting with road surfaces at y=0
@@ -91,6 +95,6 @@ Recent decisions affecting current work:
 
 ## Session Continuity
 
-Last session: 2026-03-10T15:58:35Z
-Stopped at: Completed 18-01-PLAN.md
-Resume file: .planning/phases/18-3d-rendering-core/18-02-PLAN.md
+Last session: 2026-03-10T16:06:11Z
+Stopped at: Completed 18-02-PLAN.md
+Resume file: .planning/phases/18-3d-rendering-core/18-03-PLAN.md
