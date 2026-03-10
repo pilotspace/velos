@@ -60,10 +60,10 @@
   6. Vehicles visually show lateral offsets through intersections with lane marking context in 2D rendering
 **Plans**: 4 plans
 Plans:
-- [ ] 16-01-PLAN.md — Junction geometry data model and Bezier precomputation
-- [ ] 16-02-PLAN.md — Junction traversal logic and frame pipeline integration
-- [ ] 16-03-PLAN.md — 2D vector map tile rendering pipeline
-- [ ] 16-04-PLAN.md — Sublane visualization, guide lines, and debug overlays
+- [x] 16-01-PLAN.md — Junction geometry data model and Bezier precomputation
+- [x] 16-02-PLAN.md — Junction traversal logic and frame pipeline integration
+- [x] 16-03-PLAN.md — 2D vector map tile rendering pipeline
+- [x] 16-04-PLAN.md — Sublane visualization, guide lines, and debug overlays
 
 ### Phase 17: Detection Ingestion & Demand Calibration
 **Goal**: External CV services can push detection data into VELOS via gRPC, and the system uses those detections to adjust simulation demand
@@ -77,10 +77,10 @@ Plans:
   5. Python and Rust client libraries can connect to the gRPC service and push detection events for integration testing
 **Plans**: 4 plans
 Plans:
-- [ ] 16-01-PLAN.md — Junction geometry data model and Bezier precomputation
-- [ ] 16-02-PLAN.md — Junction traversal logic and frame pipeline integration
-- [ ] 16-03-PLAN.md — 2D vector map tile rendering pipeline
-- [ ] 16-04-PLAN.md — Sublane visualization, guide lines, and debug overlays
+- [ ] 17-01-PLAN.md — Proto definition, velos-api crate scaffold, and async-sync bridge
+- [ ] 17-02-PLAN.md — CameraRegistry, DetectionAggregator, and gRPC DetectionService handler
+- [ ] 17-03-PLAN.md — CalibrationOverlay, Spawner integration, app wiring, and egui panel
+- [ ] 17-04-PLAN.md — Camera FOV rendering, Rust/Python client SDKs, and visual verification
 
 ### Phase 18: 3D Rendering Core
 **Goal**: User can view the running simulation in a 3D perspective with depth-correct rendering, LOD agents, road surfaces, and time-of-day lighting
@@ -92,12 +92,7 @@ Plans:
   3. Agents render as 3D meshes when close, billboards at mid-range, and dots when far -- all via GPU instancing
   4. User can toggle between 2D top-down and 3D perspective with a single click, preserving camera position
   5. Scene lighting changes with simulation time-of-day (bright directional sun during day, dim ambient at night)
-**Plans**: 4 plans
-Plans:
-- [ ] 16-01-PLAN.md — Junction geometry data model and Bezier precomputation
-- [ ] 16-02-PLAN.md — Junction traversal logic and frame pipeline integration
-- [ ] 16-03-PLAN.md — 2D vector map tile rendering pipeline
-- [ ] 16-04-PLAN.md — Sublane visualization, guide lines, and debug overlays
+**Plans**: [To be planned]
 
 ### Phase 19: 3D City Scene
 **Goal**: The 3D view includes extruded buildings from OSM data and terrain from SRTM DEM, creating a recognizable HCMC cityscape
@@ -107,12 +102,7 @@ Plans:
   1. OSM building footprints render as extruded 3D volumes with height derived from building:levels tag
   2. Ground surface renders from SRTM DEM heightmap data as a terrain mesh with elevation variation
   3. Buildings and terrain integrate with the existing 3D scene (correct depth, lighting, and camera interaction -- no z-fighting)
-**Plans**: 4 plans
-Plans:
-- [ ] 16-01-PLAN.md — Junction geometry data model and Bezier precomputation
-- [ ] 16-02-PLAN.md — Junction traversal logic and frame pipeline integration
-- [ ] 16-03-PLAN.md — 2D vector map tile rendering pipeline
-- [ ] 16-04-PLAN.md — Sublane visualization, guide lines, and debug overlays
+**Plans**: [To be planned]
 
 ### Phase 20: Real-Time Calibration
 **Goal**: Simulation demand continuously self-corrects from streaming detection data without requiring restart
@@ -121,12 +111,7 @@ Plans:
 **Success Criteria** (what must be TRUE):
   1. While the simulation is running, new detection data flowing in causes demand adjustments within the current session
   2. User can observe OD spawn rates changing in response to streaming detection counts without stopping or restarting the simulation
-**Plans**: 4 plans
-Plans:
-- [ ] 16-01-PLAN.md — Junction geometry data model and Bezier precomputation
-- [ ] 16-02-PLAN.md — Junction traversal logic and frame pipeline integration
-- [ ] 16-03-PLAN.md — 2D vector map tile rendering pipeline
-- [ ] 16-04-PLAN.md — Sublane visualization, guide lines, and debug overlays
+**Plans**: [To be planned]
 
 ## Progress
 
@@ -150,12 +135,12 @@ Phase 16 first (foundation). Phases 17 + 18 in parallel after 16. Phase 19 after
 | 13. Final Integration Wiring & GPU Transfer Audit | v1.1 | 3/3 | Complete | 2026-03-08 |
 | 14. Wire GTFS → Bus Stops Pipeline | v1.1 | 2/2 | Complete | 2026-03-08 |
 | 15. File Size Reduction & Housekeeping | v1.1 | 3/3 | Complete | 2026-03-08 |
-| 16. Intersection Sublane Model | 4/4 | Complete   | 2026-03-09 | - |
-| 17. Detection Ingestion & Demand Calibration | v1.2 | 0/? | Not started | - |
+| 16. Intersection Sublane Model | v1.2 | 4/4 | Complete | 2026-03-09 |
+| 17. Detection Ingestion & Demand Calibration | v1.2 | 0/4 | Planning | - |
 | 18. 3D Rendering Core | v1.2 | 0/? | Not started | - |
 | 19. 3D City Scene | v1.2 | 0/? | Not started | - |
 | 20. Real-Time Calibration | v1.2 | 0/? | Not started | - |
 
 ---
 *Roadmap created: 2026-03-09*
-*Last updated: 2026-03-09 (revision 2 -- added intersection sublane foundation phase)*
+*Last updated: 2026-03-10 (Phase 17 plans created)*
