@@ -36,6 +36,10 @@ pub use aggregator::DetectionAggregator;
 pub use bridge::{ApiBridge, ApiCommand};
 pub use camera::{Camera, CameraRegistry};
 pub use detection::DetectionServiceImpl;
+pub use calibration::{
+    CalibrationOverlay, CalibrationStore, CameraCalibrationState, compute_calibration_factors,
+    compute_camera_ratio,
+};
 pub use error::ApiError;
 
 use std::sync::{Arc, Mutex};

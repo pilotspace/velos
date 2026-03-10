@@ -16,6 +16,7 @@ log = { workspace = true }
 arc-swap = { workspace = true }
 rstar = { workspace = true }
 tokio-stream = { workspace = true }
+velos-demand = { path = "../velos-demand" }
 velos-net = { path = "../velos-net" }
 
 [build-dependencies]
