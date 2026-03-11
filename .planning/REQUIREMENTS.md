@@ -31,7 +31,7 @@ Requirements for Digital Twin milestone. Each maps to roadmap phases.
 ### Calibration
 
 - [x] **CAL-01**: System adjusts simulation demand (OD spawn rates) based on observed vs simulated counts
-- [ ] **CAL-02**: System continuously calibrates demand during a running simulation from streaming detection data
+- [x] **CAL-02**: System continuously calibrates demand during a running simulation from streaming detection data
 
 ### 3D Rendering
 
@@ -94,7 +94,7 @@ Deferred to future release. Tracked but not in current roadmap.
 | DET-05 | Phase 17 | Complete |
 | DET-06 | Phase 17 | Complete |
 | CAL-01 | Phase 17 | Complete |
-| CAL-02 | Phase 20 | Pending |
+| CAL-02 | Phase 20 | Complete |
 | R3D-01 | Phase 18 | Complete |
 | R3D-02 | Phase 18 | Complete |
 | R3D-03 | Phase 18 | Complete |

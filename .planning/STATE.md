@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Digital Twin
-status: completed
-stopped_at: Phase 20 context gathered
-last_updated: "2026-03-11T06:06:16.213Z"
-last_activity: 2026-03-11 -- Phase 19 Plan 03 complete (building+terrain pipelines, render integration, visual verification)
+status: in-progress
+stopped_at: Phase 20 Plan 01 complete
+last_updated: "2026-03-11T06:41:02Z"
+last_activity: 2026-03-11 -- Phase 20 Plan 01 complete (event-driven calibration trigger with stability safeguards)
 progress:
   total_phases: 5
   completed_phases: 4
-  total_plans: 15
-  completed_plans: 15
-  percent: 100
+  total_plans: 17
+  completed_plans: 16
+  percent: 94
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-09)
 
 **Core value:** Motorbikes move realistically through traffic using continuous sublane positioning -- not forced into discrete lanes like Western traffic models
-**Current focus:** Phase 18 complete -- ready for Phase 19 (3D City Scene) or Phase 20 (Real-Time Calibration)
+**Current focus:** Phase 20 in progress -- event-driven calibration trigger delivered, Plan 02 next
 
 ## Current Position
 
-Phase: 19 of 20 (3D City Scene)
-Plan: 3 of 3 in current phase (complete)
-Status: Phase 19 complete -- all 3 plans delivered
-Last activity: 2026-03-11 -- Phase 19 Plan 03 complete (building+terrain pipelines, render integration, visual verification)
+Phase: 20 of 20 (Real-Time Calibration)
+Plan: 1 of 2 in current phase (complete)
+Status: Phase 20 Plan 01 complete -- event-driven calibration trigger delivered
+Last activity: 2026-03-11 -- Phase 20 Plan 01 complete (event-driven calibration trigger with stability safeguards)
 
-Progress: [██████████] 100% (Phase 19)
+Progress: [█████████░] 94% (Phase 20)
 
 ## Accumulated Context
 
@@ -101,6 +101,11 @@ Recent decisions affecting current work:
 - [Phase 19]: Disabled back-face culling for buildings to handle mixed winding from earcut triangulation
 - [Phase 19]: Half-Lambert shading (dot*0.5+0.5) for softer building appearance
 - [Phase 19]: Camera focus distance passed to render_frame for LOD selection
+- [20-01]: Window-change detection as sole calibration trigger (no 300s fallback timer)
+- [20-01]: 30s cooldown between recalibrations prevents thrashing
+- [20-01]: Staleness decay starts at 3 consecutive unchanged windows with 0.1*(n-2) rate
+- [20-01]: Change cap +/-0.2 per step applied after compute, before overlay swap
+- [20-01]: MIN_OBSERVED_THRESHOLD=10 added alongside existing MIN_SIMULATED_THRESHOLD=5
 
 ### Pending Todos
 
@@ -114,6 +119,6 @@ Recent decisions affecting current work:
 
 ## Session Continuity
 
-Last session: 2026-03-11T06:06:16.211Z
-Stopped at: Phase 20 context gathered
-Resume file: .planning/phases/20-real-time-calibration/20-CONTEXT.md
+Last session: 2026-03-11T06:41:02Z
+Stopped at: Completed 20-01-PLAN.md
+Resume file: .planning/phases/20-real-time-calibration/20-01-SUMMARY.md

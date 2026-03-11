@@ -151,7 +151,7 @@ Phase 16 first (foundation). Phases 17 + 18 in parallel after 16. Phase 19 after
 | 17. Detection Ingestion & Demand Calibration | v1.2 | 4/4 | Complete | 2026-03-10 |
 | 18. 3D Rendering Core | v1.2 | 4/4 | Complete | 2026-03-11 |
 | 19. 3D City Scene | v1.2 | 3/3 | Complete | 2026-03-11 |
-| 20. Real-Time Calibration | v1.2 | 0/2 | Not started | - |
+| 20. Real-Time Calibration | 1/2 | In Progress|  | - |
 
 ---
 *Roadmap created: 2026-03-09*
