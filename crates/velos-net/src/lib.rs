@@ -4,6 +4,7 @@
 //! depends on. Agents need edges to drive on, spatial queries for neighbor
 //! detection, and routing for path assignment.
 
+pub mod building_import;
 pub mod cch;
 pub mod cleaning;
 pub mod error;
@@ -18,6 +19,7 @@ pub mod sumo_demand;
 #[allow(dead_code, clippy::collapsible_if)]
 pub mod sumo_import;
 
+pub use building_import::{BuildingFootprint, import_buildings};
 pub use cleaning::{clean_network, CleaningConfig, CleaningReport, OverrideFile};
 pub use error::NetError;
 pub use graph::{OneWayDirection, RoadClass, RoadEdge, RoadGraph, RoadNode, TimeWindow};
