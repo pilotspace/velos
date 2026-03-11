@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Digital Twin
 status: in_progress
-stopped_at: Completed 18-03-PLAN.md
-last_updated: "2026-03-10T16:09:44Z"
-last_activity: 2026-03-10 -- Phase 18 Plan 03 complete (LOD agent rendering, lighting, mesh/billboard shaders)
+stopped_at: Completed 18-04-PLAN.md (Phase 18 complete)
+last_updated: "2026-03-11T00:00:00Z"
+last_activity: 2026-03-11 -- Phase 18 complete (3D Rendering Core -- all 4 plans finished)
 progress:
   total_phases: 5
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 12
-  completed_plans: 11
-  percent: 92
+  completed_plans: 12
+  percent: 100
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-09)
 
 **Core value:** Motorbikes move realistically through traffic using continuous sublane positioning -- not forced into discrete lanes like Western traffic models
-**Current focus:** Phase 18 in progress -- 3D Rendering Core (OrbitCamera, Renderer3D, mesh/billboard instancing, view toggle)
+**Current focus:** Phase 18 complete -- ready for Phase 19 (3D City Scene) or Phase 20 (Real-Time Calibration)
 
 ## Current Position
 
-Phase: 18 of 20 (3D Rendering Core) -- IN PROGRESS
-Plan: 3 of 4 in current phase (complete)
-Status: Plan 03 complete, ready for Plan 04
-Last activity: 2026-03-10 -- Phase 18 Plan 03 complete (LOD agent rendering, lighting, mesh/billboard shaders)
+Phase: 18 of 20 (3D Rendering Core) -- COMPLETE
+Plan: 4 of 4 in current phase (complete)
+Status: Phase 18 complete, ready for Phase 19
+Last activity: 2026-03-11 -- Phase 18 Plan 04 complete (view toggle wiring, orbit camera, render dispatch, visual verification)
 
-Progress: [███████░░░] 75% (Phase 18)
+Progress: [██████████] 100% (Phase 18)
 
 ## Accumulated Context
 
@@ -39,6 +39,9 @@ Progress: [███████░░░] 75% (Phase 18)
 Decisions are logged in PROJECT.md Key Decisions table.
 Recent decisions affecting current work:
 
+- [18-04]: Extracted app_input.rs and app_egui.rs from app.rs to stay under 700-line limit
+- [18-04]: Render dispatch renders target mode during transition (no cross-fade)
+- [18-04]: build_instances_3d maps 2D (x, y) to 3D (x, 0, y) with LOD classification from eye position
 - [18-02]: Road surface shader reuses ground_plane vertex layout (position vec3 + color vec4 = 28 bytes)
 - [18-02]: Alpha blending on road pipeline for semi-transparent lane marking colors
 - [18-02]: Y-offset layering: road=0.0, junction=0.005, marking=0.01 prevents z-fighting
@@ -99,6 +102,6 @@ Recent decisions affecting current work:
 
 ## Session Continuity
 
-Last session: 2026-03-10T16:09:44Z
-Stopped at: Completed 18-03-PLAN.md
-Resume file: .planning/phases/18-3d-rendering-core/18-04-PLAN.md
+Last session: 2026-03-11T00:00:00Z
+Stopped at: Completed 18-04-PLAN.md (Phase 18 complete)
+Resume file: .planning/phases/19-3d-city-scene/ (Phase 19 planning needed)

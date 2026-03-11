@@ -41,7 +41,7 @@
 
 - [x] **Phase 16: Intersection Sublane Model & 2D Map Tiles** - Sublane through junctions, conflict detection, 2D vector map tile background, sublane visualization (completed 2026-03-09)
 - [x] **Phase 17: Detection Ingestion & Demand Calibration** - gRPC detection service with camera registration, count/speed aggregation, batch demand adjustment, and client SDKs (completed 2026-03-10)
-- [ ] **Phase 18: 3D Rendering Core** - Perspective camera, depth buffer, 3D roads, LOD agents, day/night lighting, 2D/3D toggle
+- [x] **Phase 18: 3D Rendering Core** - Perspective camera, depth buffer, 3D roads, LOD agents, day/night lighting, 2D/3D toggle (completed 2026-03-11)
 - [ ] **Phase 19: 3D City Scene** - OSM building extrusions and SRTM DEM terrain rendering
 - [ ] **Phase 20: Real-Time Calibration** - Continuous streaming calibration without simulation restart
 
@@ -94,10 +94,10 @@ Plans:
   5. Scene lighting changes with simulation time-of-day (bright directional sun during day, dim ambient at night)
 **Plans**: 4 plans
 Plans:
-- [ ] 18-01-PLAN.md — OrbitCamera, ViewMode types, depth buffer, and Renderer3D scaffold
-- [ ] 18-02-PLAN.md — Road surface polygons, lane markings, and junction fills from RoadGraph
-- [ ] 18-03-PLAN.md — Lighting system, glTF mesh loader, LOD classification, and 3D agent shaders
-- [ ] 18-04-PLAN.md — View toggle wiring, orbit camera input, render dispatch, and visual verification
+- [x] 18-01-PLAN.md — OrbitCamera, ViewMode types, depth buffer, and Renderer3D scaffold
+- [x] 18-02-PLAN.md — Road surface polygons, lane markings, and junction fills from RoadGraph
+- [x] 18-03-PLAN.md — Lighting system, glTF mesh loader, LOD classification, and 3D agent shaders
+- [x] 18-04-PLAN.md — View toggle wiring, orbit camera input, render dispatch, and visual verification
 
 ### Phase 19: 3D City Scene
 **Goal**: The 3D view includes extruded buildings from OSM data and terrain from SRTM DEM, creating a recognizable HCMC cityscape
@@ -142,7 +142,7 @@ Phase 16 first (foundation). Phases 17 + 18 in parallel after 16. Phase 19 after
 | 15. File Size Reduction & Housekeeping | v1.1 | 3/3 | Complete | 2026-03-08 |
 | 16. Intersection Sublane Model | v1.2 | 4/4 | Complete | 2026-03-09 |
 | 17. Detection Ingestion & Demand Calibration | v1.2 | 4/4 | Complete | 2026-03-10 |
-| 18. 3D Rendering Core | 3/4 | In Progress|  | - |
+| 18. 3D Rendering Core | v1.2 | 4/4 | Complete | 2026-03-11 |
 | 19. 3D City Scene | v1.2 | 0/? | Not started | - |
 | 20. Real-Time Calibration | v1.2 | 0/? | Not started | - |
 
