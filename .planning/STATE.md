@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Digital Twin
 status: completed
-stopped_at: Completed 19-02-PLAN.md
-last_updated: "2026-03-11T05:30:01.897Z"
-last_activity: 2026-03-11 -- Phase 18 Plan 04 complete (view toggle wiring, orbit camera, render dispatch, visual verification)
+stopped_at: Completed 19-03-PLAN.md
+last_updated: "2026-03-11T05:56:44.791Z"
+last_activity: 2026-03-11 -- Phase 19 Plan 03 complete (building+terrain pipelines, render integration, visual verification)
 progress:
   total_phases: 5
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 15
-  completed_plans: 13
+  completed_plans: 15
   percent: 100
 ---
 
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-03-09)
 ## Current Position
 
 Phase: 19 of 20 (3D City Scene)
-Plan: 1 of 3 in current phase (complete)
-Status: Phase 19 Plan 01 complete, ready for Plan 02
-Last activity: 2026-03-11 -- Phase 19 Plan 01 complete (building footprint extraction, extrusion geometry, lit shader)
+Plan: 3 of 3 in current phase (complete)
+Status: Phase 19 complete -- all 3 plans delivered
+Last activity: 2026-03-11 -- Phase 19 Plan 03 complete (building+terrain pipelines, render integration, visual verification)
 
-Progress: [███-------] 33% (Phase 19)
+Progress: [██████████] 100% (Phase 19)
 
 ## Accumulated Context
 
@@ -98,6 +98,9 @@ Recent decisions affecting current work:
 - [Phase 18]: Y layer separation increased 10x (junction 0.05, marking 0.1) for reliable depth ordering at oblique angles
 - [Phase 19]: Manual SRTM .hgt parsing over external crate -- format is trivially simple
 - [Phase 19]: Terrain Y clamped to -0.5 to stay below road surface at Y=0
+- [Phase 19]: Disabled back-face culling for buildings to handle mixed winding from earcut triangulation
+- [Phase 19]: Half-Lambert shading (dot*0.5+0.5) for softer building appearance
+- [Phase 19]: Camera focus distance passed to render_frame for LOD selection
 
 ### Pending Todos
 
@@ -111,6 +114,6 @@ Recent decisions affecting current work:
 
 ## Session Continuity
 
-Last session: 2026-03-11T05:33:43Z
-Stopped at: Completed 19-01-PLAN.md
-Resume file: .planning/phases/19-3d-city-scene/19-01-SUMMARY.md
+Last session: 2026-03-11T05:56:44.789Z
+Stopped at: Completed 19-03-PLAN.md
+Resume file: None
