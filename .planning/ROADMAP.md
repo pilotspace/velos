@@ -109,9 +109,9 @@ Plans:
   3. Buildings and terrain integrate with the existing 3D scene (correct depth, lighting, and camera interaction -- no z-fighting)
 **Plans**: 3 plans
 Plans:
-- [ ] 19-01-PLAN.md — Building footprint extraction from OSM and extrusion geometry generation
-- [ ] 19-02-PLAN.md — SRTM DEM terrain parsing and mesh generation
-- [ ] 19-03-PLAN.md — Renderer3D integration, app wiring, LOD, and visual verification
+- [x] 19-01-PLAN.md — Building footprint extraction from OSM and extrusion geometry generation
+- [x] 19-02-PLAN.md — SRTM DEM terrain parsing and mesh generation
+- [x] 19-03-PLAN.md — Renderer3D integration, app wiring, LOD, and visual verification
 
 ### Phase 20: Real-Time Calibration
 **Goal**: Simulation demand continuously self-corrects from streaming detection data without requiring restart
@@ -120,7 +120,10 @@ Plans:
 **Success Criteria** (what must be TRUE):
   1. While the simulation is running, new detection data flowing in causes demand adjustments within the current session
   2. User can observe OD spawn rates changing in response to streaming detection counts without stopping or restarting the simulation
-**Plans**: [To be planned]
+**Plans**: 2 plans
+Plans:
+- [ ] 20-01-PLAN.md — Calibration engine refactor: window-change trigger, stability safeguards, TDD
+- [ ] 20-02-PLAN.md — Egui panel enhancement with status indicators, pause toggle, and visual verification
 
 ## Progress
 
@@ -147,9 +150,9 @@ Phase 16 first (foundation). Phases 17 + 18 in parallel after 16. Phase 19 after
 | 16. Intersection Sublane Model | v1.2 | 4/4 | Complete | 2026-03-09 |
 | 17. Detection Ingestion & Demand Calibration | v1.2 | 4/4 | Complete | 2026-03-10 |
 | 18. 3D Rendering Core | v1.2 | 4/4 | Complete | 2026-03-11 |
-| 19. 3D City Scene | 3/3 | Complete    | 2026-03-11 | - |
-| 20. Real-Time Calibration | v1.2 | 0/? | Not started | - |
+| 19. 3D City Scene | v1.2 | 3/3 | Complete | 2026-03-11 |
+| 20. Real-Time Calibration | v1.2 | 0/2 | Not started | - |
 
 ---
 *Roadmap created: 2026-03-09*
-*Last updated: 2026-03-11 (Phase 19 plans created)*
+*Last updated: 2026-03-11 (Phase 20 plans created)*
