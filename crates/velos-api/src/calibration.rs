@@ -20,6 +20,13 @@ const EMA_ALPHA: f32 = 0.3;
 /// Minimum simulated count threshold below which calibration is skipped.
 const MIN_SIMULATED_THRESHOLD: u32 = 5;
 
+/// Minimum observed count per camera to participate in calibration.
+/// Cameras with fewer observations are skipped (returns previous ratio).
+pub const MIN_OBSERVED_THRESHOLD: u32 = 10;
+
+/// Maximum per-step change in OD factor between consecutive calibration overlays.
+pub const MAX_FACTOR_CHANGE_PER_STEP: f32 = 0.2;
+
 /// Lower clamp bound for calibration ratio.
 const RATIO_CLAMP_LOW: f32 = 0.5;
 
@@ -91,6 +98,11 @@ pub struct CameraCalibrationState {
     pub last_observed: u32,
     /// Last simulated count from ECS query.
     pub last_simulated: u32,
+    /// Number of consecutive calibration cycles where this camera had no new window.
+    pub consecutive_stale_windows: u32,
+    /// Start timestamp (ms) of the last processed aggregation window for this camera.
+    /// -1 indicates no window has been processed yet (late-connecting camera).
+    pub last_window_start_ms: i64,
 }
 
 impl Default for CameraCalibrationState {
@@ -99,6 +111,8 @@ impl Default for CameraCalibrationState {
             previous_ratio: 1.0,
             last_observed: 0,
             last_simulated: 0,
+            consecutive_stale_windows: 0,
+            last_window_start_ms: -1,
         }
     }
 }
@@ -113,6 +127,11 @@ pub fn compute_camera_ratio(
 ) -> f32 {
     state.last_observed = observed;
     state.last_simulated = simulated;
+
+    if observed < MIN_OBSERVED_THRESHOLD {
+        // Not enough observed data to calibrate; keep previous ratio.
+        return state.previous_ratio;
+    }
 
     if simulated <= MIN_SIMULATED_THRESHOLD {
         // Not enough simulated data to calibrate; keep previous ratio.
@@ -129,6 +148,42 @@ pub fn compute_camera_ratio(
 
     state.previous_ratio = clamped;
     clamped
+}
+
+/// Decay a stale camera's ratio toward 1.0 (baseline = no adjustment).
+///
+/// Only activates when the camera has been stale for 3 or more consecutive
+/// calibration windows. The decay rate increases with each additional stale
+/// window, moving the ratio progressively toward 1.0 until it converges.
+pub fn decay_toward_baseline(state: &mut CameraCalibrationState) {
+    if state.consecutive_stale_windows < 3 {
+        return;
+    }
+
+    let decay = (0.1 * (state.consecutive_stale_windows - 2) as f32).min(1.0);
+    // Move toward 1.0 regardless of direction
+    state.previous_ratio += (1.0 - state.previous_ratio) * decay;
+}
+
+/// Cap per-step OD factor changes to prevent large jumps between calibration
+/// cycles.
+///
+/// For each factor in the new overlay, if an old factor exists for that OD
+/// pair, the delta is clamped to `[-MAX_FACTOR_CHANGE_PER_STEP, +MAX_FACTOR_CHANGE_PER_STEP]`.
+/// First-time factors (no old value) are left uncapped.
+pub fn apply_change_cap(
+    old_factors: &HashMap<(Zone, Zone), f32>,
+    new_overlay: &mut CalibrationOverlay,
+) {
+    for (key, new_factor) in new_overlay.factors.iter_mut() {
+        if let Some(&old_factor) = old_factors.get(key) {
+            let delta = *new_factor - old_factor;
+            let clamped_delta =
+                delta.clamp(-MAX_FACTOR_CHANGE_PER_STEP, MAX_FACTOR_CHANGE_PER_STEP);
+            *new_factor = old_factor + clamped_delta;
+        }
+        // If no old_factor exists, leave uncapped (first calibration)
+    }
 }
 
 /// Compute calibration factors for all OD pairs based on camera observations.
@@ -276,8 +331,7 @@ mod tests {
         // Start with previous_ratio near max to test clamping
         let mut state = CameraCalibrationState {
             previous_ratio: 1.9,
-            last_observed: 0,
-            last_simulated: 0,
+            ..Default::default()
         };
         // raw = 1000/10 = 100.0
         // EMA: 0.3 * 100.0 + 0.7 * 1.9 = 30.0 + 1.33 = 31.33 -> clamped to 2.0
@@ -289,12 +343,11 @@ mod tests {
     fn ratio_clamped_to_0_5_when_observed_much_less() {
         let mut state = CameraCalibrationState {
             previous_ratio: 0.6,
-            last_observed: 0,
-            last_simulated: 0,
+            ..Default::default()
         };
-        // raw = 1/1000 = 0.001
-        // EMA: 0.3 * 0.001 + 0.7 * 0.6 = 0.0003 + 0.42 = 0.4203 -> clamped to 0.5
-        let ratio = compute_camera_ratio(1, 1000, &mut state);
+        // raw = 10/1000 = 0.01
+        // EMA: 0.3 * 0.01 + 0.7 * 0.6 = 0.003 + 0.42 = 0.423 -> clamped to 0.5
+        let ratio = compute_camera_ratio(10, 1000, &mut state);
         assert_eq!(ratio, 0.5);
     }
 
@@ -309,8 +362,7 @@ mod tests {
     fn simulated_below_threshold_defaults_ratio_to_previous() {
         let mut state = CameraCalibrationState {
             previous_ratio: 1.3,
-            last_observed: 0,
-            last_simulated: 0,
+            ..Default::default()
         };
         // simulated=5 is at threshold (<=5), should skip
         let ratio = compute_camera_ratio(100, 5, &mut state);
@@ -339,5 +391,193 @@ mod tests {
         let mut state = CameraCalibrationState::default();
         let ratio = compute_camera_ratio(50, 10, &mut state);
         assert_eq!(ratio, 2.0, "EMA should be applied before clamping");
+    }
+
+    // --- Task 1: New stability safeguard tests ---
+
+    #[test]
+    fn default_state_has_staleness_fields() {
+        let state = CameraCalibrationState::default();
+        assert_eq!(state.consecutive_stale_windows, 0);
+        assert_eq!(state.last_window_start_ms, -1);
+    }
+
+    #[test]
+    fn min_observation_threshold_skips_low_observed() {
+        // observed < MIN_OBSERVED_THRESHOLD (10) should return previous_ratio
+        let mut state = CameraCalibrationState {
+            previous_ratio: 1.4,
+            ..Default::default()
+        };
+        let ratio = compute_camera_ratio(9, 100, &mut state);
+        assert_eq!(ratio, 1.4, "observed < 10 should skip calibration");
+    }
+
+    #[test]
+    fn min_observation_threshold_allows_at_threshold() {
+        // observed == 10 should NOT skip
+        let mut state = CameraCalibrationState::default();
+        let ratio = compute_camera_ratio(10, 100, &mut state);
+        // raw = 10/100 = 0.1, EMA: 0.3*0.1 + 0.7*1.0 = 0.73 -> clamp to 0.73
+        let expected = 0.3 * 0.1 + 0.7 * 1.0;
+        assert!(
+            (ratio - expected).abs() < 0.001,
+            "observed == 10 should calibrate: expected {expected}, got {ratio}"
+        );
+    }
+
+    #[test]
+    fn decay_toward_baseline_no_action_below_3_windows() {
+        let mut state = CameraCalibrationState {
+            previous_ratio: 1.5,
+            consecutive_stale_windows: 2,
+            ..Default::default()
+        };
+        decay_toward_baseline(&mut state);
+        assert_eq!(state.previous_ratio, 1.5, "should not decay with < 3 stale windows");
+    }
+
+    #[test]
+    fn decay_toward_baseline_at_3_windows() {
+        // consecutive_stale_windows = 3 -> decay = 0.1 * (3 - 2) = 0.1
+        // ratio = 1.5, move toward 1.0: 1.5 + (1.0 - 1.5) * 0.1 = 1.5 - 0.05 = 1.45
+        let mut state = CameraCalibrationState {
+            previous_ratio: 1.5,
+            consecutive_stale_windows: 3,
+            ..Default::default()
+        };
+        decay_toward_baseline(&mut state);
+        assert!(
+            (state.previous_ratio - 1.45).abs() < 0.001,
+            "expected 1.45, got {}",
+            state.previous_ratio
+        );
+    }
+
+    #[test]
+    fn decay_toward_baseline_ratio_below_1_decays_up() {
+        // ratio = 0.7, consecutive_stale_windows = 4 -> decay = 0.1 * (4-2) = 0.2
+        // 0.7 + (1.0 - 0.7) * 0.2 = 0.7 + 0.06 = 0.76
+        let mut state = CameraCalibrationState {
+            previous_ratio: 0.7,
+            consecutive_stale_windows: 4,
+            ..Default::default()
+        };
+        decay_toward_baseline(&mut state);
+        assert!(
+            (state.previous_ratio - 0.76).abs() < 0.001,
+            "expected 0.76, got {}",
+            state.previous_ratio
+        );
+    }
+
+    #[test]
+    fn decay_does_not_overshoot_1_0() {
+        // ratio = 1.05, consecutive_stale_windows = 15 -> decay = 0.1 * 13 = 1.3 -> capped to 1.0
+        // 1.05 + (1.0 - 1.05) * 1.0 = 1.05 - 0.05 = 1.0
+        let mut state = CameraCalibrationState {
+            previous_ratio: 1.05,
+            consecutive_stale_windows: 15,
+            ..Default::default()
+        };
+        decay_toward_baseline(&mut state);
+        assert!(
+            (state.previous_ratio - 1.0).abs() < 0.001,
+            "decay should not overshoot 1.0, got {}",
+            state.previous_ratio
+        );
+    }
+
+    #[test]
+    fn apply_change_cap_limits_positive_delta() {
+        let mut old_factors = HashMap::new();
+        old_factors.insert((Zone::District1, Zone::District3), 1.0);
+
+        let mut overlay = CalibrationOverlay {
+            factors: HashMap::new(),
+            timestamp_sim_seconds: 100.0,
+        };
+        overlay.factors.insert((Zone::District1, Zone::District3), 1.5);
+
+        apply_change_cap(&old_factors, &mut overlay);
+
+        let capped = overlay.factors[&(Zone::District1, Zone::District3)];
+        assert!(
+            (capped - 1.2).abs() < 0.001,
+            "delta +0.5 should be capped to +0.2: expected 1.2, got {capped}"
+        );
+    }
+
+    #[test]
+    fn apply_change_cap_limits_negative_delta() {
+        let mut old_factors = HashMap::new();
+        old_factors.insert((Zone::District1, Zone::District3), 1.5);
+
+        let mut overlay = CalibrationOverlay {
+            factors: HashMap::new(),
+            timestamp_sim_seconds: 100.0,
+        };
+        overlay.factors.insert((Zone::District1, Zone::District3), 1.0);
+
+        apply_change_cap(&old_factors, &mut overlay);
+
+        let capped = overlay.factors[&(Zone::District1, Zone::District3)];
+        assert!(
+            (capped - 1.3).abs() < 0.001,
+            "delta -0.5 should be capped to -0.2: expected 1.3, got {capped}"
+        );
+    }
+
+    #[test]
+    fn apply_change_cap_allows_uncapped_first_time() {
+        let old_factors = HashMap::new(); // no previous factors
+
+        let mut overlay = CalibrationOverlay {
+            factors: HashMap::new(),
+            timestamp_sim_seconds: 100.0,
+        };
+        overlay.factors.insert((Zone::District1, Zone::District3), 2.0);
+
+        apply_change_cap(&old_factors, &mut overlay);
+
+        let factor = overlay.factors[&(Zone::District1, Zone::District3)];
+        assert_eq!(factor, 2.0, "first-time factor should be uncapped");
+    }
+
+    #[test]
+    fn apply_change_cap_allows_within_limit() {
+        let mut old_factors = HashMap::new();
+        old_factors.insert((Zone::District1, Zone::District3), 1.0);
+
+        let mut overlay = CalibrationOverlay {
+            factors: HashMap::new(),
+            timestamp_sim_seconds: 100.0,
+        };
+        overlay.factors.insert((Zone::District1, Zone::District3), 1.15);
+
+        apply_change_cap(&old_factors, &mut overlay);
+
+        let factor = overlay.factors[&(Zone::District1, Zone::District3)];
+        assert!(
+            (factor - 1.15).abs() < 0.001,
+            "delta within limit should be unchanged: expected 1.15, got {factor}"
+        );
+    }
+
+    #[test]
+    fn late_camera_default_state_participates() {
+        // A camera that just connected has default state (previous_ratio=1.0).
+        // With sufficient observed and simulated data, it should calibrate normally.
+        let mut state = CameraCalibrationState::default();
+        assert_eq!(state.consecutive_stale_windows, 0);
+        assert_eq!(state.last_window_start_ms, -1);
+
+        let ratio = compute_camera_ratio(80, 100, &mut state);
+        // raw = 0.8, EMA: 0.3*0.8 + 0.7*1.0 = 0.24 + 0.70 = 0.94
+        let expected = 0.3 * 0.8 + 0.7 * 1.0;
+        assert!(
+            (ratio - expected).abs() < 0.001,
+            "late camera should calibrate: expected {expected}, got {ratio}"
+        );
     }
 }
