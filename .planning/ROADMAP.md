@@ -142,7 +142,7 @@ Phase 16 first (foundation). Phases 17 + 18 in parallel after 16. Phase 19 after
 | 15. File Size Reduction & Housekeeping | v1.1 | 3/3 | Complete | 2026-03-08 |
 | 16. Intersection Sublane Model | v1.2 | 4/4 | Complete | 2026-03-09 |
 | 17. Detection Ingestion & Demand Calibration | v1.2 | 4/4 | Complete | 2026-03-10 |
-| 18. 3D Rendering Core | v1.2 | Complete    | 2026-03-11 | 2026-03-11 |
+| 18. 3D Rendering Core | 4/4 | Complete   | 2026-03-11 | 2026-03-11 |
 | 19. 3D City Scene | v1.2 | 0/? | Not started | - |
 | 20. Real-Time Calibration | v1.2 | 0/? | Not started | - |
 

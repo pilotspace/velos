@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Digital Twin
 status: completed
-stopped_at: Completed 18-04-PLAN.md (Phase 18 complete)
-last_updated: "2026-03-11T03:49:06.791Z"
+stopped_at: Completed 18-04-PLAN.md (Phase 18 complete, post-checkpoint fixes committed)
+last_updated: "2026-03-11T04:15:17.443Z"
 last_activity: 2026-03-11 -- Phase 18 Plan 04 complete (view toggle wiring, orbit camera, render dispatch, visual verification)
 progress:
   total_phases: 5
@@ -89,6 +89,9 @@ Recent decisions affecting current work:
 - [v1.2]: Phases 17 + 18 execute in parallel after Phase 16 (architecturally independent)
 - [v1.2]: New Renderer3D crate (cannot retrofit existing 2D renderer)
 - [v1.2]: OSM building extrusion via earcut (no external 3D datasets for HCMC)
+- [Phase 18]: Reverse-Z depth buffer with infinite far plane eliminates z-fighting on overlapping road layers
+- [Phase 18]: Right-drag pan for Mac trackpad ergonomics (two-finger click+drag as middle-drag alternative)
+- [Phase 18]: Y layer separation increased 10x (junction 0.05, marking 0.1) for reliable depth ordering at oblique angles
 
 ### Pending Todos
 
@@ -102,6 +105,6 @@ Recent decisions affecting current work:
 
 ## Session Continuity
 
-Last session: 2026-03-11T00:00:00Z
-Stopped at: Completed 18-04-PLAN.md (Phase 18 complete)
-Resume file: .planning/phases/19-3d-city-scene/ (Phase 19 planning needed)
+Last session: 2026-03-11T04:15:17.442Z
+Stopped at: Completed 18-04-PLAN.md (Phase 18 complete, post-checkpoint fixes committed)
+Resume file: None
