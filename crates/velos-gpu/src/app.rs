@@ -45,6 +45,8 @@ struct GpuState {
     compute_dispatcher: ComputeDispatcher,
     /// True while the middle mouse button is held (3D pan).
     middle_pressed: bool,
+    /// True while the right mouse button is held (3D pan on Mac trackpad).
+    right_pressed: bool,
     /// Last cursor position for computing orbit/pan deltas.
     last_cursor_pos: Option<(f32, f32)>,
     // egui state
@@ -245,6 +247,7 @@ impl GpuState {
             sim,
             compute_dispatcher,
             middle_pressed: false,
+            right_pressed: false,
             last_cursor_pos: None,
             egui_ctx,
             egui_state,
@@ -596,6 +599,7 @@ impl ApplicationHandler for VelosApp {
                                 &mut state.orbit_camera,
                                 &mut state.left_pressed,
                                 &mut state.middle_pressed,
+                                &mut state.right_pressed,
                                 &mut state.last_cursor_pos,
                             );
                         }

@@ -35,11 +35,11 @@ pub const GAP_LENGTH: f64 = 3.0;
 /// Road surface Y position (ground level).
 pub const ROAD_Y: f32 = 0.0;
 
-/// Lane marking Y position (slightly above road to prevent z-fighting).
-pub const MARKING_Y: f32 = 0.01;
+/// Lane marking Y position (above road to prevent z-fighting).
+pub const MARKING_Y: f32 = 0.1;
 
 /// Junction surface Y position (between road and markings).
-pub const JUNCTION_Y: f32 = 0.005;
+pub const JUNCTION_Y: f32 = 0.05;
 
 // --- Vertex type ---
 

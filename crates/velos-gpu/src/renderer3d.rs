@@ -54,8 +54,8 @@ const GROUND_COLOR: [f32; 4] = [0.227, 0.353, 0.227, 1.0];
 /// Ground plane half-size in metres (total 20km x 20km).
 const GROUND_HALF_SIZE: f32 = 10_000.0;
 
-/// Ground plane Y offset (slightly below zero to avoid z-fighting with road surfaces).
-const GROUND_Y: f32 = -0.01;
+/// Ground plane Y offset (well below road surfaces to avoid z-fighting).
+const GROUND_Y: f32 = -0.5;
 
 /// Generate ground plane vertices: two triangles forming a 20000x20000 quad.
 fn ground_plane_vertices() -> [GroundPlaneVertex; 6] {
@@ -222,10 +222,11 @@ impl Renderer3D {
             ],
         });
 
+        // Reverse-Z: near maps to 1.0, far to 0.0 — use GreaterEqual compare.
         let depth_stencil_state = wgpu::DepthStencilState {
             format: wgpu::TextureFormat::Depth32Float,
             depth_write_enabled: true,
-            depth_compare: wgpu::CompareFunction::Less,
+            depth_compare: wgpu::CompareFunction::GreaterEqual,
             stencil: wgpu::StencilState::default(),
             bias: wgpu::DepthBiasState::default(),
         };
@@ -285,7 +286,18 @@ impl Renderer3D {
                     cull_mode: None,
                     ..Default::default()
                 },
-                depth_stencil: Some(depth_stencil_state.clone()),
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: wgpu::TextureFormat::Depth32Float,
+                    depth_write_enabled: true,
+                    depth_compare: wgpu::CompareFunction::GreaterEqual,
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState {
+                        // Negative bias in reverse-Z pushes ground behind roads
+                        constant: -2,
+                        slope_scale: -2.0,
+                        clamp: 0.0,
+                    },
+                }),
                 multisample: wgpu::MultisampleState::default(),
                 multiview: None,
                 cache: None,
@@ -649,7 +661,8 @@ impl Renderer3D {
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                 view: &self.depth_texture_view,
                 depth_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(1.0),
+                    // Reverse-Z: clear to 0.0 (= infinitely far)
+                    load: wgpu::LoadOp::Clear(0.0),
                     store: wgpu::StoreOp::Store,
                 }),
                 stencil_ops: None,
@@ -885,7 +898,7 @@ mod tests {
         for v in &verts {
             assert!(
                 (v.position[1] - GROUND_Y).abs() < 1e-6,
-                "Y should be {GROUND_Y}"
+                "Y should be {GROUND_Y}, got {}", v.position[1]
             );
         }
     }

@@ -108,8 +108,8 @@ impl OrbitCamera {
             yaw: 0.0,
             pitch: 45.0_f32.to_radians(),
             fov_y: 45.0_f32.to_radians(),
-            near: 0.1,
-            far: 10_000.0,
+            near: 1.0,
+            far: 100_000.0,
             viewport,
         }
     }
@@ -125,15 +125,18 @@ impl OrbitCamera {
         self.focus + Vec3::new(x, y, z)
     }
 
-    /// Compute the combined view-projection matrix (right-handed).
+    /// Compute the combined view-projection matrix (right-handed, reverse-Z).
     ///
-    /// Uses `look_at_rh` for the view matrix and `perspective_rh` for projection,
-    /// producing a matrix compatible with wgpu's NDC (Y-down clip, Z in [0,1]).
+    /// Uses `look_at_rh` for the view matrix and infinite reverse-Z projection.
+    /// Reverse-Z maps near plane to depth=1.0 and infinity to depth=0.0,
+    /// giving much better depth precision at distance (critical for large scenes
+    /// with roads/ground at similar Y values). Requires `GreaterEqual` depth
+    /// compare and depth clear to 0.0.
     pub fn view_proj_matrix(&self) -> Mat4 {
         let eye = self.eye_position();
         let aspect = self.viewport.x / self.viewport.y;
         let view = Mat4::look_at_rh(eye, self.focus, Vec3::Y);
-        let proj = Mat4::perspective_rh(self.fov_y, aspect, self.near, self.far);
+        let proj = Mat4::perspective_infinite_reverse_rh(self.fov_y, aspect, self.near);
         proj * view
     }
 

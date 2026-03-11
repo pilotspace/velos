@@ -18,7 +18,16 @@ const PAN_SENSITIVITY: f32 = 1.0;
 /// Zoom factor per scroll unit.
 const SCROLL_ZOOM_FACTOR: f32 = 0.1;
 
+/// Trackpad pan sensitivity (world units per pixel of trackpad scroll).
+const TRACKPAD_PAN_SENSITIVITY: f32 = 0.003;
+
 /// Handle 3D orbit camera input events.
+///
+/// Controls:
+/// - Left-drag: orbit camera
+/// - Middle-drag or right-drag: pan camera (right-drag works on Mac trackpad)
+/// - Scroll Y: zoom in/out
+/// - Scroll X (trackpad horizontal): pan left/right
 ///
 /// Returns `true` if the event was consumed by the 3D input handler.
 pub fn handle_3d_input(
@@ -26,6 +35,7 @@ pub fn handle_3d_input(
     orbit_camera: &mut OrbitCamera,
     left_pressed: &mut bool,
     middle_pressed: &mut bool,
+    right_pressed: &mut bool,
     last_cursor_pos: &mut Option<(f32, f32)>,
 ) -> bool {
     match event {
@@ -33,19 +43,21 @@ pub fn handle_3d_input(
             state: btn_state,
             button,
             ..
-        } => {
-            match button {
-                MouseButton::Left => {
-                    *left_pressed = *btn_state == ElementState::Pressed;
-                    true
-                }
-                MouseButton::Middle => {
-                    *middle_pressed = *btn_state == ElementState::Pressed;
-                    true
-                }
-                _ => false,
+        } => match button {
+            MouseButton::Left => {
+                *left_pressed = *btn_state == ElementState::Pressed;
+                true
             }
-        }
+            MouseButton::Middle => {
+                *middle_pressed = *btn_state == ElementState::Pressed;
+                true
+            }
+            MouseButton::Right => {
+                *right_pressed = *btn_state == ElementState::Pressed;
+                true
+            }
+            _ => false,
+        },
 
         WindowEvent::CursorMoved { position, .. } => {
             let new_pos = (position.x as f32, position.y as f32);
@@ -53,27 +65,48 @@ pub fn handle_3d_input(
                 let dx = new_pos.0 - prev_x;
                 let dy = new_pos.1 - prev_y;
 
-                if *left_pressed {
+                if *left_pressed && !*right_pressed {
                     // Left-drag: orbit camera
                     orbit_camera.orbit(-dx * ORBIT_SENSITIVITY, dy * ORBIT_SENSITIVITY);
-                } else if *middle_pressed {
-                    // Middle-drag: pan camera focus point
+                } else if *middle_pressed || *right_pressed {
+                    // Middle-drag or right-drag: pan camera focus point
+                    // Right-drag enables pan on Mac trackpads (two-finger click+drag)
                     let scale = orbit_camera.distance * PAN_SENSITIVITY * 0.002;
                     orbit_camera.pan(-dx * scale, dy * scale);
                 }
             }
             *last_cursor_pos = Some(new_pos);
-            *left_pressed || *middle_pressed
+            *left_pressed || *middle_pressed || *right_pressed
         }
 
         WindowEvent::MouseWheel { delta, .. } => {
-            let scroll_y = match delta {
-                MouseScrollDelta::LineDelta(_, y) => *y,
-                MouseScrollDelta::PixelDelta(pos) => pos.y as f32 / 20.0,
-            };
-            // Negative scroll = zoom in (smaller distance), positive = zoom out
-            let factor = 1.0 - scroll_y * SCROLL_ZOOM_FACTOR;
-            orbit_camera.zoom_by(factor);
+            match delta {
+                MouseScrollDelta::LineDelta(x, y) => {
+                    // Mouse wheel: zoom only
+                    if y.abs() > 0.0 {
+                        let factor = 1.0 - y * SCROLL_ZOOM_FACTOR;
+                        orbit_camera.zoom_by(factor);
+                    }
+                    // Horizontal scroll wheel: pan left/right
+                    if x.abs() > 0.0 {
+                        let scale = orbit_camera.distance * PAN_SENSITIVITY * 0.002;
+                        orbit_camera.pan(-x * scale * 5.0, 0.0);
+                    }
+                }
+                MouseScrollDelta::PixelDelta(pos) => {
+                    // Trackpad: horizontal = pan, vertical = zoom
+                    let px = pos.x as f32;
+                    let py = pos.y as f32;
+                    if py.abs() > 0.0 {
+                        let factor = 1.0 - (py / 20.0) * SCROLL_ZOOM_FACTOR;
+                        orbit_camera.zoom_by(factor);
+                    }
+                    if px.abs() > 0.0 {
+                        let scale = orbit_camera.distance * TRACKPAD_PAN_SENSITIVITY;
+                        orbit_camera.pan(-px * scale, 0.0);
+                    }
+                }
+            }
             true
         }
 
