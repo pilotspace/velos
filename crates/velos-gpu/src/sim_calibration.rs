@@ -256,7 +256,8 @@ impl SimWorld {
         );
 
         // 8.5. Guard: skip calibration if too few agents (sim still warming up)
-        if total_agents < MIN_AGENTS_FOR_CALIBRATION {
+        // In detection-only mode, skip this guard to allow bootstrapping from zero.
+        if !self.detection_only_spawning && total_agents < MIN_AGENTS_FOR_CALIBRATION {
             log::debug!(
                 "[calibration] only {} agents (need {}), skipping",
                 total_agents, MIN_AGENTS_FOR_CALIBRATION
