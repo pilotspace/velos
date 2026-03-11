@@ -134,16 +134,68 @@ fn draw_vehicle_legend(ui: &mut egui::Ui, sim: &SimWorld) {
     }
 }
 
-fn draw_calibration_panel(ui: &mut egui::Ui, sim: &SimWorld, grpc_addr: &str) {
+fn draw_calibration_panel(ui: &mut egui::Ui, sim: &mut SimWorld, grpc_addr: &str) {
     ui.separator();
     ui.heading("Calibration");
-    ui.label(format!("gRPC: {}", grpc_addr));
 
-    let reg = sim.camera_registry.lock().unwrap();
-    let cameras = reg.list();
-    ui.label(format!("Cameras: {}", cameras.len()));
+    // --- Collect data from locked registry (minimal lock scope) ---
+    let camera_data: Vec<_> = {
+        let reg = sim.camera_registry.lock().unwrap();
+        reg.list()
+            .iter()
+            .map(|cam| {
+                let state = sim.calibration_states.get(&cam.id);
+                let obs = state.map(|s| s.last_observed).unwrap_or(0);
+                let sim_count = state.map(|s| s.last_simulated).unwrap_or(0);
+                let ratio = state.map(|s| s.previous_ratio).unwrap_or(1.0);
+                let stale = state.map(|s| s.consecutive_stale_windows).unwrap_or(0);
+                (cam.name.clone(), obs, sim_count, ratio, stale)
+            })
+            .collect()
+    };
 
-    if !cameras.is_empty() {
+    // --- 1. Header: status indicator + pause toggle ---
+    let (status_label, status_color) = if sim.calibration_paused {
+        ("Paused", egui::Color32::from_rgb(230, 130, 0))
+    } else if camera_data.is_empty() {
+        ("Idle", egui::Color32::from_rgb(128, 128, 128))
+    } else if camera_data.iter().all(|(_, _, _, _, stale)| *stale >= 3) {
+        ("Stale", egui::Color32::from_rgb(230, 200, 0))
+    } else {
+        ("Calibrating", egui::Color32::from_rgb(0, 200, 0))
+    };
+
+    ui.horizontal(|ui| {
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
+        ui.painter().rect_filled(rect, 5.0, status_color);
+        ui.label(status_label);
+    });
+
+    ui.checkbox(&mut sim.calibration_paused, "Pause Calibration");
+    ui.label(format!("gRPC: {grpc_addr}"));
+
+    // --- 2. Global summary ---
+    let active_count = camera_data.iter().filter(|(_, _, _, _, s)| *s < 3).count();
+    let mean_ratio = if camera_data.is_empty() {
+        1.0
+    } else {
+        let sum: f32 = camera_data.iter().map(|(_, _, _, r, _)| r).sum();
+        sum / camera_data.len() as f32
+    };
+    let secs_since = (sim.sim_time - sim.last_calibration_time).max(0.0) as u64;
+
+    ui.separator();
+    ui.horizontal(|ui| {
+        ui.label(format!("Active: {active_count}"));
+        ui.separator();
+        ui.label(format!("Mean ratio: {mean_ratio:.2}"));
+        ui.separator();
+        ui.label(format!("Last cal: {secs_since}s ago"));
+    });
+
+    // --- 3. Per-camera grid ---
+    if !camera_data.is_empty() {
+        ui.separator();
         egui::Grid::new("calibration_grid")
             .striped(true)
             .show(ui, |ui| {
@@ -151,18 +203,23 @@ fn draw_calibration_panel(ui: &mut egui::Ui, sim: &SimWorld, grpc_addr: &str) {
                 ui.label("Obs");
                 ui.label("Sim");
                 ui.label("Ratio");
+                ui.label("Status");
                 ui.end_row();
 
-                for cam in &cameras {
-                    let state = sim.calibration_states.get(&cam.id);
-                    let obs = state.map(|s| s.last_observed).unwrap_or(0);
-                    let sim_count = state.map(|s| s.last_simulated).unwrap_or(0);
-                    let ratio = state.map(|s| s.previous_ratio).unwrap_or(1.0);
-
-                    ui.label(&cam.name);
+                for (name, obs, sim_count, ratio, stale) in &camera_data {
+                    ui.label(name);
                     ui.label(format!("{obs}"));
                     ui.label(format!("{sim_count}"));
                     ui.label(format!("{ratio:.2}"));
+
+                    let (cam_status, cam_color) = if *stale == 0 {
+                        ("Live".to_string(), egui::Color32::from_rgb(0, 200, 0))
+                    } else if *stale < 3 {
+                        (format!("Stale ({stale})"), egui::Color32::from_rgb(230, 200, 0))
+                    } else {
+                        ("Decaying".to_string(), egui::Color32::from_rgb(230, 130, 0))
+                    };
+                    ui.colored_label(cam_color, cam_status);
                     ui.end_row();
                 }
             });
