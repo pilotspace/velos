@@ -180,3 +180,102 @@ class VelosDetectionClient:
             DetectionAck messages from the server.
         """
         return self.stub.StreamDetections(iter(batches))
+
+
+def _generate_batches(
+    camera_id: int,
+    interval: float,
+    count_range: tuple[int, int] = (3, 15),
+) -> Iterator[detection_pb2.DetectionBatch]:
+    """Generate detection batches at a fixed interval.
+
+    Sends motorbike + car detections with randomized counts and speeds.
+    Runs until interrupted (Ctrl+C).
+    """
+    import random
+    import time
+
+    batch_id = 1
+    while True:
+        motorbike_count = random.randint(*count_range)
+        car_count = random.randint(1, max(1, count_range[1] // 3))
+        ts = int(time.time() * 1000)
+
+        batch = detection_pb2.DetectionBatch(
+            batch_id=batch_id,
+            events=[
+                make_detection_event(
+                    camera_id, 1, motorbike_count,
+                    speed_kmh=random.uniform(15.0, 45.0),
+                    timestamp_ms=ts,
+                ),
+                make_detection_event(
+                    camera_id, 2, car_count,
+                    speed_kmh=random.uniform(20.0, 50.0),
+                    timestamp_ms=ts,
+                ),
+            ],
+        )
+        print(
+            f"  batch {batch_id}: {motorbike_count} motorbikes, "
+            f"{car_count} cars @ {ts}"
+        )
+        yield batch
+        batch_id += 1
+        time.sleep(interval)
+
+
+if __name__ == "__main__":
+    import argparse
+    import sys
+
+    parser = argparse.ArgumentParser(
+        description="Stream synthetic detections to VELOS gRPC server.",
+    )
+    parser.add_argument(
+        "--addr", default="[::1]:50051",
+        help="gRPC server address (default: [::1]:50051)",
+    )
+    parser.add_argument(
+        "--lat", type=float, default=10.7756,
+        help="Camera latitude (default: D1 HCMC)",
+    )
+    parser.add_argument(
+        "--lon", type=float, default=106.7019,
+        help="Camera longitude (default: D1 HCMC)",
+    )
+    parser.add_argument(
+        "--name", default="test-cam-1",
+        help="Camera name (default: test-cam-1)",
+    )
+    parser.add_argument(
+        "--interval", type=float, default=2.0,
+        help="Seconds between batches (default: 2.0)",
+    )
+    args = parser.parse_args()
+
+    print(f"Connecting to {args.addr}...")
+    try:
+        with VelosDetectionClient(args.addr) as client:
+            cam_id, edges = client.register_camera(
+                lat=args.lat, lon=args.lon,
+                heading_deg=90.0, fov_deg=120.0, range_m=200.0,
+                name=args.name,
+            )
+            print(
+                f"Registered camera '{args.name}' -> id={cam_id}, "
+                f"edges={edges}"
+            )
+            print(
+                f"Streaming detections every {args.interval}s "
+                f"(Ctrl+C to stop)...\n"
+            )
+            for ack in client.stream_detections(
+                _generate_batches(cam_id, args.interval)
+            ):
+                print(f"  <- ack batch {ack.batch_id}: status={ack.status}")
+    except grpc.RpcError as e:
+        print(f"gRPC error: {e.code()} - {e.details()}", file=sys.stderr)
+        sys.exit(1)
+    except KeyboardInterrupt:
+        print("\nStopped.")

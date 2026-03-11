@@ -67,6 +67,10 @@ const CALIBRATION_POLL_INTERVAL_SECS: f64 = 2.0;
 /// Prevents thrashing when multiple windows complete in rapid succession.
 const CALIBRATION_COOLDOWN_SECS: f64 = 30.0;
 
+/// Minimum number of agents with RoadPosition required before calibration runs.
+/// Prevents wildly inaccurate factors when the sim has just started spawning.
+const MIN_AGENTS_FOR_CALIBRATION: u32 = 100;
+
 /// Maximum API commands to process per frame to prevent frame spikes.
 const MAX_COMMANDS_PER_FRAME: usize = 64;
 
@@ -117,23 +121,33 @@ impl SimWorld {
     pub(crate) fn step_calibration(&mut self) {
         // 1. Early return if calibration is paused
         if self.calibration_paused {
+            log::debug!("[calibration] paused, skipping");
             return;
         }
 
         // 1.5. Poll guard: only check for window changes every N sim-seconds
         // to avoid per-frame mutex acquisition on registry + aggregator.
+        log::debug!(
+            "[calibration] entry: sim_time={:.1}, last_poll={:.1}, diff={:.1}, threshold={}",
+            self.sim_time, self.last_calibration_poll_time,
+            self.sim_time - self.last_calibration_poll_time,
+            CALIBRATION_POLL_INTERVAL_SECS
+        );
         if self.sim_time - self.last_calibration_poll_time < CALIBRATION_POLL_INTERVAL_SECS {
             return;
         }
         self.last_calibration_poll_time = self.sim_time;
+        log::debug!("[calibration] poll check passed at sim_time={:.1}", self.sim_time);
 
         // 2. Lock registry, get camera list, early return if empty
         let registry = self.camera_registry.lock().unwrap();
         let cameras = registry.list();
         if cameras.is_empty() {
+            log::debug!("[calibration] no cameras registered, skipping");
             return;
         }
         let cam_ids: Vec<u32> = cameras.iter().map(|c| c.id).collect();
+        log::debug!("[calibration] {} cameras registered: {:?}", cam_ids.len(), cam_ids);
         drop(registry); // release lock before aggregator
 
         // 3. Lock aggregator, check for new windows
@@ -154,6 +168,11 @@ impl SimWorld {
                 .copied()
                 .unwrap_or(-1);
 
+            log::debug!(
+                "[calibration] cam_id={}: latest_start={}, last_processed={}",
+                cam_id, latest_start, last_processed
+            );
+
             if latest_start > last_processed {
                 has_new_windows = true;
                 cameras_with_new_windows.push(cam_id);
@@ -165,6 +184,7 @@ impl SimWorld {
 
         // 4. If no new windows found, handle staleness and return
         if !has_new_windows {
+            log::debug!("[calibration] no new windows, incrementing staleness");
             for &cam_id in &cameras_unchanged {
                 let state = self.calibration_states.entry(cam_id).or_default();
                 state.consecutive_stale_windows += 1;
@@ -185,7 +205,12 @@ impl SimWorld {
         }
 
         // 6. Apply cooldown: new windows exist but cooldown not elapsed
+        log::debug!(
+            "[calibration] new windows found! sim_time={:.1}, last_cal={:.1}, cooldown={}",
+            self.sim_time, self.last_calibration_time, CALIBRATION_COOLDOWN_SECS
+        );
         if self.sim_time - self.last_calibration_time < CALIBRATION_COOLDOWN_SECS {
+            log::debug!("[calibration] cooldown not elapsed, skipping full recalibration");
             return;
         }
 
@@ -199,6 +224,13 @@ impl SimWorld {
 
         let mut edge_to_cameras: HashMap<u32, Vec<u32>> = HashMap::new();
         for cam in &cameras {
+            log::debug!(
+                "Camera '{}' (id={}) covers {} edges: {:?}",
+                cam.name,
+                cam.id,
+                cam.covered_edges.len(),
+                &cam.covered_edges[..cam.covered_edges.len().min(10)]
+            );
             for &edge_id in &cam.covered_edges {
                 edge_to_cameras
                     .entry(edge_id)
@@ -209,12 +241,27 @@ impl SimWorld {
         drop(registry); // release lock before ECS query
 
         self.simulated_counts.clear();
+        let mut total_agents = 0u32;
         for rp in self.world.query_mut::<&RoadPosition>().into_iter() {
+            total_agents += 1;
             if let Some(cam_ids) = edge_to_cameras.get(&rp.edge_index) {
                 for &cam_id in cam_ids {
                     *self.simulated_counts.entry(cam_id).or_insert(0) += 1;
                 }
             }
+        }
+        log::debug!(
+            "[calibration] {} agents, {} covered edges, sim_counts={:?}",
+            total_agents, edge_to_cameras.len(), &self.simulated_counts,
+        );
+
+        // 8.5. Guard: skip calibration if too few agents (sim still warming up)
+        if total_agents < MIN_AGENTS_FOR_CALIBRATION {
+            log::debug!(
+                "[calibration] only {} agents (need {}), skipping",
+                total_agents, MIN_AGENTS_FOR_CALIBRATION
+            );
+            return;
         }
 
         // 9. Compute calibration factors
@@ -265,6 +312,7 @@ mod tests {
     use super::*;
     use velos_api::calibration::{CalibrationOverlay, CameraCalibrationState};
     use velos_api::proto::velos::v2::{DetectionEvent, VehicleClass};
+    use velos_core::components::{Kinematics, Position, VehicleType};
 
     /// Create a minimal SimWorld for calibration tests (CPU-only, simple graph).
     fn make_calibration_sim() -> SimWorld {
@@ -290,6 +338,18 @@ mod tests {
         );
         let graph = velos_net::RoadGraph::new(g);
         SimWorld::new_cpu_only(graph)
+    }
+
+    /// Spawn `count` test agents on the given edge so calibration's MIN_AGENTS guard passes.
+    fn spawn_test_agents(sim: &mut SimWorld, edge_index: u32, count: u32) {
+        for i in 0..count {
+            sim.world.spawn((
+                Position { x: i as f64 * 2.0, y: 0.0 },
+                Kinematics { vx: 1.0, vy: 0.0, speed: 1.0, heading: 0.0 },
+                VehicleType::Motorbike,
+                RoadPosition { edge_index, lane: 0, offset_m: i as f64 * 2.0 },
+            ));
+        }
     }
 
     /// Register a camera and add detection data so the aggregator has a window.
@@ -395,10 +455,34 @@ mod tests {
     }
 
     #[test]
+    fn step_calibration_skips_when_too_few_agents() {
+        let mut sim = make_calibration_sim();
+        sim.sim_time = 100.0;
+        sim.last_calibration_time = 0.0;
+
+        // Spawn only 5 agents (below MIN_AGENTS_FOR_CALIBRATION)
+        spawn_test_agents(&mut sim, 0, 5);
+
+        setup_camera_with_detection(&mut sim, "cam-1", vec![0], 100_000, 50);
+        sim.edge_to_zone.insert(0, Zone::District1);
+
+        sim.step_calibration();
+
+        let overlay = sim.calibration_store.current();
+        assert!(
+            overlay.factors.is_empty(),
+            "calibration should skip when too few agents"
+        );
+    }
+
+    #[test]
     fn step_calibration_triggers_on_window_change() {
         let mut sim = make_calibration_sim();
         sim.sim_time = 100.0;
         sim.last_calibration_time = 0.0; // cooldown elapsed
+
+        // Spawn enough agents to pass MIN_AGENTS guard
+        spawn_test_agents(&mut sim, 0, MIN_AGENTS_FOR_CALIBRATION);
 
         // Register camera with detection data and edge-to-zone mapping
         let cam_id = setup_camera_with_detection(
@@ -412,8 +496,8 @@ mod tests {
         // Ensure edge 0 maps to a zone
         sim.edge_to_zone.insert(0, Zone::District1);
 
-        // Camera has a window at start_ms=0 (floor(100000/300000)*300000 = 0).
-        // last_processed_windows is empty, so -1 < 0 => new window detected.
+        // Camera has a window at start_ms=90000 (floor(100000/15000)*15000 = 90000).
+        // last_processed_windows is empty, so -1 < 90000 => new window detected.
         sim.step_calibration();
 
         let overlay = sim.calibration_store.current();
@@ -429,6 +513,8 @@ mod tests {
         let mut sim = make_calibration_sim();
         sim.sim_time = 100.0;
         sim.last_calibration_time = 0.0;
+
+        spawn_test_agents(&mut sim, 0, MIN_AGENTS_FOR_CALIBRATION);
 
         let cam_id = setup_camera_with_detection(
             &mut sim,
@@ -448,7 +534,8 @@ mod tests {
             sim.last_processed_windows.contains_key(&cam_id),
             "last_processed_windows should be updated for camera"
         );
-        assert_eq!(sim.last_processed_windows[&cam_id], 0); // window start_ms=0
+        // window start_ms = floor(100000/15000)*15000 = 90000
+        assert_eq!(sim.last_processed_windows[&cam_id], 90_000);
     }
 
     #[test]
@@ -500,6 +587,8 @@ mod tests {
         sim.sim_time = 100.0;
         sim.last_calibration_time = 0.0;
 
+        spawn_test_agents(&mut sim, 0, MIN_AGENTS_FOR_CALIBRATION);
+
         // Pre-load an overlay with a known factor
         let mut old_factors = HashMap::new();
         old_factors.insert((Zone::District1, Zone::District1), 1.0);
@@ -531,6 +620,7 @@ mod tests {
         sim.sim_time = 100.0;
         sim.last_calibration_time = 0.0;
 
+        spawn_test_agents(&mut sim, 0, MIN_AGENTS_FOR_CALIBRATION);
         setup_camera_with_detection(&mut sim, "cam-1", vec![0], 100_000, 50);
         sim.edge_to_zone.insert(0, Zone::District1);
 

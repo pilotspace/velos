@@ -7,8 +7,12 @@ use std::collections::HashMap;
 
 use crate::proto::velos::v2::DetectionEvent;
 
-/// Default window duration: 5 minutes in milliseconds.
-const DEFAULT_WINDOW_DURATION_MS: i64 = 300_000;
+/// Default window duration: 15 seconds in milliseconds.
+///
+/// Shorter windows allow calibration to trigger more frequently during
+/// development/testing. For production with real camera feeds, increase
+/// to 300_000 (5 minutes) for statistically robust counts.
+const DEFAULT_WINDOW_DURATION_MS: i64 = 15_000;
 
 /// Default retention period: 1 hour in milliseconds.
 const DEFAULT_RETENTION_MS: i64 = 3_600_000;
@@ -158,7 +162,7 @@ mod tests {
     #[test]
     fn default_window_duration_and_retention() {
         let agg = DetectionAggregator::default();
-        assert_eq!(agg.window_duration_ms, 300_000, "default 5 min windows");
+        assert_eq!(agg.window_duration_ms, 15_000, "default 15s windows");
         assert_eq!(agg.retention_ms, 3_600_000, "default 1 hr retention");
     }
 

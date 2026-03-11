@@ -120,6 +120,13 @@ impl DetectionService for DetectionServiceImpl {
     ) -> Result<Response<RegisterCameraResponse>, Status> {
         let req = request.into_inner();
 
+        // Validate camera parameters against realistic physical bounds
+        if let Err(reason) = crate::camera::validate_camera_params(&req) {
+            return Err(Status::invalid_argument(format!(
+                "invalid camera params: {reason}"
+            )));
+        }
+
         // Register camera locally (computes covered edges via shared registry)
         let camera = {
             let mut reg = self.registry.lock().unwrap();

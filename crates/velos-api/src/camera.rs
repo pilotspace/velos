@@ -11,6 +11,57 @@ use velos_net::EquirectangularProjection;
 
 use crate::proto::velos::v2::RegisterCameraRequest;
 
+/// Realistic bounds for camera registration parameters.
+const MIN_FOV_DEG: f32 = 10.0;
+const MAX_FOV_DEG: f32 = 180.0;
+const MIN_RANGE_M: f32 = 10.0;
+const MAX_RANGE_M: f32 = 300.0;
+const MIN_LAT: f64 = -90.0;
+const MAX_LAT: f64 = 90.0;
+const MIN_LON: f64 = -180.0;
+const MAX_LON: f64 = 180.0;
+
+/// Validate camera registration parameters against realistic physical bounds.
+///
+/// Returns `Ok(())` if all params are valid, or `Err(reason)` with a human-readable
+/// message describing the first violated constraint.
+pub fn validate_camera_params(req: &RegisterCameraRequest) -> Result<(), String> {
+    if req.name.is_empty() {
+        return Err("camera name must not be empty".into());
+    }
+    if req.lat < MIN_LAT || req.lat > MAX_LAT {
+        return Err(format!(
+            "lat={} out of range [{}, {}]",
+            req.lat, MIN_LAT, MAX_LAT
+        ));
+    }
+    if req.lon < MIN_LON || req.lon > MAX_LON {
+        return Err(format!(
+            "lon={} out of range [{}, {}]",
+            req.lon, MIN_LON, MAX_LON
+        ));
+    }
+    if req.fov_deg < MIN_FOV_DEG || req.fov_deg > MAX_FOV_DEG {
+        return Err(format!(
+            "fov_deg={} out of range [{}, {}]",
+            req.fov_deg, MIN_FOV_DEG, MAX_FOV_DEG
+        ));
+    }
+    if req.range_m < MIN_RANGE_M || req.range_m > MAX_RANGE_M {
+        return Err(format!(
+            "range_m={} out of range [{}, {}]",
+            req.range_m, MIN_RANGE_M, MAX_RANGE_M
+        ));
+    }
+    if req.heading_deg < 0.0 || req.heading_deg >= 360.0 {
+        return Err(format!(
+            "heading_deg={} out of range [0, 360)",
+            req.heading_deg
+        ));
+    }
+    Ok(())
+}
+
 /// A registered camera with computed covered edges.
 #[derive(Debug, Clone)]
 pub struct Camera {
@@ -372,5 +423,77 @@ mod tests {
 
         let result = edges_in_fov(cam_pos, heading_rad, half_angle_rad, range_m, &tree);
         assert_eq!(result, vec![1], "duplicate edge IDs should be deduplicated");
+    }
+
+    fn make_valid_request() -> RegisterCameraRequest {
+        RegisterCameraRequest {
+            name: "cam-1".into(),
+            lat: 10.77,
+            lon: 106.70,
+            heading_deg: 90.0,
+            fov_deg: 60.0,
+            range_m: 100.0,
+        }
+    }
+
+    #[test]
+    fn validate_accepts_valid_params() {
+        assert!(validate_camera_params(&make_valid_request()).is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_empty_name() {
+        let mut req = make_valid_request();
+        req.name = "".into();
+        assert!(validate_camera_params(&req).is_err());
+    }
+
+    #[test]
+    fn validate_rejects_fov_too_large() {
+        let mut req = make_valid_request();
+        req.fov_deg = 360.0;
+        let err = validate_camera_params(&req).unwrap_err();
+        assert!(err.contains("fov_deg"), "{err}");
+    }
+
+    #[test]
+    fn validate_rejects_fov_too_small() {
+        let mut req = make_valid_request();
+        req.fov_deg = 5.0;
+        assert!(validate_camera_params(&req).is_err());
+    }
+
+    #[test]
+    fn validate_rejects_range_too_large() {
+        let mut req = make_valid_request();
+        req.range_m = 500.0;
+        let err = validate_camera_params(&req).unwrap_err();
+        assert!(err.contains("range_m"), "{err}");
+    }
+
+    #[test]
+    fn validate_rejects_range_too_small() {
+        let mut req = make_valid_request();
+        req.range_m = 5.0;
+        assert!(validate_camera_params(&req).is_err());
+    }
+
+    #[test]
+    fn validate_rejects_invalid_lat() {
+        let mut req = make_valid_request();
+        req.lat = 100.0;
+        assert!(validate_camera_params(&req).is_err());
+    }
+
+    #[test]
+    fn validate_boundary_values() {
+        // Max FOV
+        let mut req = make_valid_request();
+        req.fov_deg = MAX_FOV_DEG;
+        assert!(validate_camera_params(&req).is_ok());
+        // Max range
+        req.fov_deg = 60.0;
+        req.range_m = MAX_RANGE_M;
+        assert!(validate_camera_params(&req).is_ok());
     }
 }
