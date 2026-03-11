@@ -90,6 +90,29 @@ impl CameraRegistry {
     pub fn list(&self) -> Vec<&Camera> {
         self.cameras.values().collect()
     }
+
+    /// Insert a camera directly without spatial query (test/internal use).
+    ///
+    /// Assigns the next sequential ID and stores the camera. Use this when
+    /// no R-tree or projection is available (e.g., unit tests in downstream crates).
+    pub fn insert_camera(&mut self, name: &str, covered_edges: Vec<u32>) -> u32 {
+        let id = self.next_id;
+        self.next_id += 1;
+        self.cameras.insert(
+            id,
+            Camera {
+                id,
+                lat: 0.0,
+                lon: 0.0,
+                heading_deg: 0.0,
+                fov_deg: 60.0,
+                range_m: 40.0,
+                name: name.to_string(),
+                covered_edges,
+            },
+        );
+        id
+    }
 }
 
 impl Default for CameraRegistry {

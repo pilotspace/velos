@@ -216,6 +216,10 @@ pub struct SimWorld {
     pub(crate) edge_to_zone: HashMap<u32, Zone>,
     /// Whether to show calibration panel in egui.
     pub show_calibration_panel: bool,
+    /// User toggle to freeze calibration (prevents overlay updates when set).
+    pub(crate) calibration_paused: bool,
+    /// Per-camera last processed aggregation window start_ms for change detection.
+    pub(crate) last_processed_windows: HashMap<u32, i64>,
 }
 
 impl SimWorld {
@@ -338,6 +342,8 @@ impl SimWorld {
             last_calibration_time: 0.0,
             edge_to_zone,
             show_calibration_panel: false,
+            calibration_paused: false,
+            last_processed_windows: HashMap::new(),
         };
 
         // Initialize reroute subsystem (builds CCH, prediction service).
@@ -422,6 +428,8 @@ impl SimWorld {
             last_calibration_time: 0.0,
             edge_to_zone,
             show_calibration_panel: false,
+            calibration_paused: false,
+            last_processed_windows: HashMap::new(),
         }
     }
 
@@ -476,6 +484,8 @@ impl SimWorld {
         self.social_force_params = SocialForceParams::default();
         self.partition_mode = PartitionMode::Single;
         self.reroute = RerouteState::new();
+        self.calibration_paused = false;
+        self.last_processed_windows.clear();
         // perception_buffers kept (GPU buffers are reusable)
         for (_, ctrl) in &mut self.signal_controllers {
             ctrl.reset();
@@ -571,7 +581,7 @@ impl SimWorld {
         // 8.5. Prediction overlay refresh (every 60 sim-seconds)
         self.step_prediction();
 
-        // 8.6. Calibration overlay refresh (every 300 sim-seconds)
+        // 8.6. Calibration overlay refresh (event-driven on window change)
         self.step_calibration();
 
         // 9. Pedestrians (GPU adaptive pipeline)

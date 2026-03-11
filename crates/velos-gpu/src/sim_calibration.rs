@@ -2,11 +2,15 @@
 //!
 //! Drains gRPC commands via try_recv each frame, computes calibration
 //! ratios from observed vs simulated counts, and swaps the overlay.
+//! Calibration triggers on aggregation window changes (event-driven),
+//! not on a fixed timer.
 
 use std::collections::HashMap;
 
 use velos_api::bridge::ApiCommand;
-use velos_api::calibration::compute_calibration_factors;
+use velos_api::calibration::{
+    apply_change_cap, compute_calibration_factors, decay_toward_baseline,
+};
 use velos_core::components::RoadPosition;
 use velos_demand::Zone;
 use velos_net::RoadGraph;
@@ -54,8 +58,9 @@ pub(crate) fn build_edge_to_zone(
     mapping
 }
 
-/// Calibration recomputation interval in sim-seconds (5 minutes).
-const CALIBRATION_INTERVAL_SECS: f64 = 300.0;
+/// Minimum cooldown between calibration recalibrations in sim-seconds.
+/// Prevents thrashing when multiple windows complete in rapid succession.
+const CALIBRATION_COOLDOWN_SECS: f64 = 30.0;
 
 /// Maximum API commands to process per frame to prevent frame spikes.
 const MAX_COMMANDS_PER_FRAME: usize = 64;
@@ -99,28 +104,87 @@ impl SimWorld {
         }
     }
 
-    /// Recompute calibration factors if enough sim-time has elapsed.
+    /// Recompute calibration factors when aggregation windows change.
     ///
-    /// Collects simulated agent counts per camera by querying the ECS
-    /// for agents on edges covered by each camera. Then computes
-    /// observed/simulated ratios with EMA smoothing and swaps the
-    /// calibration overlay.
+    /// Event-driven trigger: detects when any camera's latest aggregation
+    /// window has a new `start_ms` compared to `last_processed_windows`.
+    /// Applies stability safeguards: cooldown, staleness decay, change cap.
     pub(crate) fn step_calibration(&mut self) {
-        // Check if calibration interval has elapsed
-        if self.sim_time - self.last_calibration_time < CALIBRATION_INTERVAL_SECS {
+        // 1. Early return if calibration is paused
+        if self.calibration_paused {
             return;
         }
-        self.last_calibration_time = self.sim_time;
 
-        // Collect simulated counts: for each camera, count agents on covered edges
+        // 2. Lock registry, get camera list, early return if empty
         let registry = self.camera_registry.lock().unwrap();
         let cameras = registry.list();
-
         if cameras.is_empty() {
             return;
         }
+        let cam_ids: Vec<u32> = cameras.iter().map(|c| c.id).collect();
+        drop(registry); // release lock before aggregator
 
-        // Build edge -> camera mapping for fast lookup
+        // 3. Lock aggregator, check for new windows
+        let aggregator = self.aggregator.lock().unwrap();
+        let mut has_new_windows = false;
+        let mut cameras_with_new_windows: Vec<u32> = Vec::new();
+        let mut cameras_unchanged: Vec<u32> = Vec::new();
+
+        for &cam_id in &cam_ids {
+            let latest_start = aggregator
+                .latest_window(cam_id)
+                .map(|w| w.start_ms)
+                .unwrap_or(-1);
+
+            let last_processed = self
+                .last_processed_windows
+                .get(&cam_id)
+                .copied()
+                .unwrap_or(-1);
+
+            if latest_start > last_processed {
+                has_new_windows = true;
+                cameras_with_new_windows.push(cam_id);
+            } else {
+                cameras_unchanged.push(cam_id);
+            }
+        }
+        drop(aggregator); // release lock
+
+        // 4. If no new windows found, handle staleness and return
+        if !has_new_windows {
+            for &cam_id in &cameras_unchanged {
+                let state = self.calibration_states.entry(cam_id).or_default();
+                state.consecutive_stale_windows += 1;
+                decay_toward_baseline(state);
+            }
+            return;
+        }
+
+        // 5. Track staleness: increment for unchanged, reset for new
+        for &cam_id in &cameras_unchanged {
+            let state = self.calibration_states.entry(cam_id).or_default();
+            state.consecutive_stale_windows += 1;
+            decay_toward_baseline(state);
+        }
+        for &cam_id in &cameras_with_new_windows {
+            let state = self.calibration_states.entry(cam_id).or_default();
+            state.consecutive_stale_windows = 0;
+        }
+
+        // 6. Apply cooldown: new windows exist but cooldown not elapsed
+        if self.sim_time - self.last_calibration_time < CALIBRATION_COOLDOWN_SECS {
+            return;
+        }
+
+        // 7. Capture current overlay factors BEFORE computing new ones (for change cap)
+        let old_factors: HashMap<(Zone, Zone), f32> =
+            self.calibration_store.current().factors.clone();
+
+        // 8. Collect simulated counts: for each camera, count agents on covered edges
+        let registry = self.camera_registry.lock().unwrap();
+        let cameras = registry.list();
+
         let mut edge_to_cameras: HashMap<u32, Vec<u32>> = HashMap::new();
         for cam in &cameras {
             for &edge_id in &cam.covered_edges {
@@ -132,7 +196,6 @@ impl SimWorld {
         }
         drop(registry); // release lock before ECS query
 
-        // Count agents per camera via ECS query
         self.simulated_counts.clear();
         for rp in self.world.query_mut::<&RoadPosition>().into_iter() {
             if let Some(cam_ids) = edge_to_cameras.get(&rp.edge_index) {
@@ -142,11 +205,11 @@ impl SimWorld {
             }
         }
 
-        // Compute calibration factors
+        // 9. Compute calibration factors
         let registry = self.camera_registry.lock().unwrap();
         let aggregator = self.aggregator.lock().unwrap();
 
-        let overlay = compute_calibration_factors(
+        let mut overlay = compute_calibration_factors(
             &registry,
             &aggregator,
             &self.simulated_counts,
@@ -155,14 +218,295 @@ impl SimWorld {
             self.sim_time,
         );
 
+        let camera_count = cameras_with_new_windows.len();
+        drop(registry);
+        drop(aggregator);
+
+        // 10. Apply change cap before swapping
+        apply_change_cap(&old_factors, &mut overlay);
+
         let factor_count = overlay.factors.len();
         self.calibration_store.swap(overlay);
+        self.last_calibration_time = self.sim_time;
+
+        // 11. Update last_processed_windows for all cameras that have windows
+        let aggregator = self.aggregator.lock().unwrap();
+        for &cam_id in &cam_ids {
+            if let Some(w) = aggregator.latest_window(cam_id) {
+                self.last_processed_windows.insert(cam_id, w.start_ms);
+            }
+        }
+        drop(aggregator);
 
         if factor_count > 0 {
-            log::debug!(
-                "Calibration overlay updated: {} OD pair factors at sim_time={:.0}",
-                factor_count,
-                self.sim_time
+            log::info!(
+                "Calibration triggered: {} cameras, {} OD factors updated",
+                camera_count,
+                factor_count
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use velos_api::calibration::{CalibrationOverlay, CameraCalibrationState};
+    use velos_api::proto::velos::v2::{DetectionEvent, VehicleClass};
+
+    /// Create a minimal SimWorld for calibration tests (CPU-only, simple graph).
+    fn make_calibration_sim() -> SimWorld {
+        use petgraph::graph::DiGraph;
+        use velos_net::graph::{RoadClass, RoadEdge, RoadNode};
+
+        let mut g = DiGraph::new();
+        let a = g.add_node(RoadNode { pos: [0.0, 0.0] });
+        let b = g.add_node(RoadNode { pos: [200.0, 0.0] });
+        g.add_edge(
+            a,
+            b,
+            RoadEdge {
+                length_m: 200.0,
+                speed_limit_mps: 13.9,
+                lane_count: 2,
+                oneway: true,
+                road_class: RoadClass::Primary,
+                geometry: vec![[0.0, 0.0], [200.0, 0.0]],
+                motorbike_only: false,
+                time_windows: None,
+            },
+        );
+        let graph = velos_net::RoadGraph::new(g);
+        SimWorld::new_cpu_only(graph)
+    }
+
+    /// Register a camera and add detection data so the aggregator has a window.
+    fn setup_camera_with_detection(
+        sim: &mut SimWorld,
+        cam_name: &str,
+        covered_edges: Vec<u32>,
+        window_timestamp_ms: i64,
+        observed_count: u32,
+    ) -> u32 {
+        let cam_id = {
+            let mut registry = sim.camera_registry.lock().unwrap();
+            registry.insert_camera(cam_name, covered_edges)
+        };
+        if observed_count > 0 {
+            let mut aggregator = sim.aggregator.lock().unwrap();
+            aggregator.ingest(
+                cam_id,
+                &DetectionEvent {
+                    camera_id: cam_id,
+                    timestamp_ms: window_timestamp_ms,
+                    vehicle_class: VehicleClass::Motorbike as i32,
+                    count: observed_count,
+                    speed_kmh: None,
+                },
+            );
+        }
+        cam_id
+    }
+
+    #[test]
+    fn step_calibration_returns_early_when_paused() {
+        let mut sim = make_calibration_sim();
+        sim.calibration_paused = true;
+        sim.sim_time = 1000.0;
+
+        // Register a camera with detection data
+        setup_camera_with_detection(&mut sim, "cam-1", vec![0], 100_000, 50);
+
+        sim.step_calibration();
+
+        // Overlay should remain empty because calibration is paused
+        let overlay = sim.calibration_store.current();
+        assert!(
+            overlay.factors.is_empty(),
+            "calibration should not run when paused"
+        );
+    }
+
+    #[test]
+    fn step_calibration_returns_early_when_no_cameras() {
+        let mut sim = make_calibration_sim();
+        sim.sim_time = 1000.0;
+
+        sim.step_calibration();
+
+        let overlay = sim.calibration_store.current();
+        assert!(
+            overlay.factors.is_empty(),
+            "calibration should not run with no cameras"
+        );
+    }
+
+    #[test]
+    fn step_calibration_returns_early_when_no_new_windows() {
+        let mut sim = make_calibration_sim();
+        sim.sim_time = 1000.0;
+
+        // Register camera but give it NO detection data
+        let cam_id = {
+            let mut registry = sim.camera_registry.lock().unwrap();
+            registry.insert_camera("cam-1", vec![0])
+        };
+
+        // Mark the last processed window as current (nothing new)
+        sim.last_processed_windows.insert(cam_id, -1);
+
+        sim.step_calibration();
+
+        let overlay = sim.calibration_store.current();
+        assert!(
+            overlay.factors.is_empty(),
+            "calibration should not run when no new windows"
+        );
+    }
+
+    #[test]
+    fn step_calibration_returns_early_when_cooldown_not_elapsed() {
+        let mut sim = make_calibration_sim();
+        sim.sim_time = 50.0;
+        sim.last_calibration_time = 40.0; // only 10s ago, cooldown is 30s
+
+        setup_camera_with_detection(&mut sim, "cam-1", vec![0], 100_000, 50);
+
+        sim.step_calibration();
+
+        // Cooldown should prevent overlay swap but staleness tracking still runs
+        let overlay = sim.calibration_store.current();
+        assert!(
+            overlay.factors.is_empty(),
+            "calibration should not run within cooldown period"
+        );
+    }
+
+    #[test]
+    fn step_calibration_triggers_on_window_change() {
+        let mut sim = make_calibration_sim();
+        sim.sim_time = 100.0;
+        sim.last_calibration_time = 0.0; // cooldown elapsed
+
+        // Register camera with detection data and edge-to-zone mapping
+        let cam_id = setup_camera_with_detection(
+            &mut sim,
+            "cam-1",
+            vec![0],
+            100_000,
+            50,
+        );
+
+        // Ensure edge 0 maps to a zone
+        sim.edge_to_zone.insert(0, Zone::District1);
+
+        // Camera has a window at start_ms=0 (floor(100000/300000)*300000 = 0).
+        // last_processed_windows is empty, so -1 < 0 => new window detected.
+        sim.step_calibration();
+
+        let overlay = sim.calibration_store.current();
+        assert!(
+            !overlay.factors.is_empty(),
+            "calibration should trigger when new window detected, cam_id={}",
+            cam_id,
+        );
+    }
+
+    #[test]
+    fn step_calibration_updates_last_processed_windows() {
+        let mut sim = make_calibration_sim();
+        sim.sim_time = 100.0;
+        sim.last_calibration_time = 0.0;
+
+        let cam_id = setup_camera_with_detection(
+            &mut sim,
+            "cam-1",
+            vec![0],
+            100_000,
+            50,
+        );
+        sim.edge_to_zone.insert(0, Zone::District1);
+
+        assert!(sim.last_processed_windows.is_empty());
+
+        sim.step_calibration();
+
+        // After calibration, last_processed_windows should be updated
+        assert!(
+            sim.last_processed_windows.contains_key(&cam_id),
+            "last_processed_windows should be updated for camera"
+        );
+        assert_eq!(sim.last_processed_windows[&cam_id], 0); // window start_ms=0
+    }
+
+    #[test]
+    fn decay_called_for_cameras_with_unchanged_windows() {
+        let mut sim = make_calibration_sim();
+        sim.sim_time = 100.0;
+
+        // Register camera with no detection data (will be unchanged)
+        let cam_id = {
+            let mut registry = sim.camera_registry.lock().unwrap();
+            registry.insert_camera("stale-cam", vec![0])
+        };
+
+        // Pre-set a calibration state with ratio != 1.0
+        sim.calibration_states.insert(
+            cam_id,
+            CameraCalibrationState {
+                previous_ratio: 1.5,
+                consecutive_stale_windows: 0,
+                ..Default::default()
+            },
+        );
+
+        // Call step_calibration multiple times to accumulate staleness
+        for _ in 0..4 {
+            sim.step_calibration();
+        }
+
+        let state = sim.calibration_states.get(&cam_id).unwrap();
+        assert_eq!(
+            state.consecutive_stale_windows, 4,
+            "consecutive_stale_windows should increment each call"
+        );
+        // After 4 stale windows, decay should have been applied on windows 3 and 4
+        // Window 3: decay = 0.1*(3-2) = 0.1, ratio moves from 1.5 toward 1.0
+        // Window 4: decay = 0.1*(4-2) = 0.2, ratio moves further toward 1.0
+        assert!(
+            state.previous_ratio < 1.5,
+            "ratio should have decayed from 1.5 toward 1.0, got {}",
+            state.previous_ratio
+        );
+    }
+
+    #[test]
+    fn apply_change_cap_applied_before_swap() {
+        let mut sim = make_calibration_sim();
+        sim.sim_time = 100.0;
+        sim.last_calibration_time = 0.0;
+
+        // Pre-load an overlay with a known factor
+        let mut old_factors = HashMap::new();
+        old_factors.insert((Zone::District1, Zone::District1), 1.0);
+        sim.calibration_store.swap(CalibrationOverlay {
+            factors: old_factors,
+            timestamp_sim_seconds: 0.0,
+        });
+
+        // Set up camera covering edge 0 with extreme observed count
+        setup_camera_with_detection(&mut sim, "cam-1", vec![0], 100_000, 500);
+        sim.edge_to_zone.insert(0, Zone::District1);
+
+        sim.step_calibration();
+
+        let overlay = sim.calibration_store.current();
+        if let Some(&factor) = overlay.factors.get(&(Zone::District1, Zone::District1)) {
+            // Factor should be capped at old + 0.2 = 1.2 maximum
+            assert!(
+                factor <= 1.2 + 0.001,
+                "factor should be capped at 1.2 (old=1.0 + 0.2), got {}",
+                factor
             );
         }
     }
