@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Digital Twin
-status: milestone-complete
-stopped_at: Phase 20 Plan 02 complete -- v1.2 Digital Twin milestone feature-complete
-last_updated: "2026-03-11T13:16:30Z"
+status: completed
+stopped_at: Completed 20-02-PLAN.md -- v1.2 milestone feature-complete
+last_updated: "2026-03-11T13:20:38.446Z"
 last_activity: 2026-03-11 -- Phase 20 Plan 02 complete (streaming calibration human-verified end-to-end)
 progress:
   total_phases: 5
