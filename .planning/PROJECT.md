@@ -2,7 +2,7 @@
 
 ## What This Is
 
-A GPU-first traffic microsimulation engine for Ho Chi Minh City that simulates 280K agents (motorbikes, cars, buses, trucks, bicycles, emergency vehicles, pedestrians) in real-time using Rust + wgpu compute shaders. Features motorbike-native sublane model, CCH intelligent routing with prediction-informed rerouting, HCMC-calibrated mixed traffic behavior (red-light creep, aggressive weaving, gap acceptance), and SUMO file compatibility. Runs as a native macOS desktop application with egui dashboard on Apple Silicon (Metal backend).
+A GPU-first traffic microsimulation engine for Ho Chi Minh City that simulates 280K agents (motorbikes, cars, buses, trucks, bicycles, emergency vehicles, pedestrians) in real-time using Rust + wgpu compute shaders. Features motorbike-native sublane model, CCH intelligent routing with prediction-informed rerouting, HCMC-calibrated mixed traffic behavior (red-light creep, aggressive weaving, gap acceptance), SUMO file compatibility, and real-world camera-based demand calibration. Packaged as a Tauri desktop application with web-based dashboard (React + TypeScript) supporting 2D analytics (deck.gl + MapLibre) and 3D city visualization (CesiumJS), backed by a fully self-hosted open-data tile pipeline.
 
 ## Core Value
 
@@ -39,21 +39,33 @@ Motorbikes move realistically through traffic using continuous sublane positioni
 - Traffic sign interaction (speed limits, stop/yield, no-turn, school zones) -- v1.1
 - HCMC behavior tuning: red-light creep, aggressive weaving, yield-based gap acceptance -- v1.1
 - All vehicle params externalized to TOML config with GPU/CPU parity -- v1.1
+- gRPC detection ingestion with camera registration and streaming counts -- v1.2
+- Spatial mapping of camera FOV to simulation network edges -- v1.2
+- Real-time demand calibration from detection aggregation with EMA smoothing -- v1.2
+- Intersection sublane model with Bezier turn paths and junction conflict resolution -- v1.2
+- Self-hosted PMTiles map tile rendering in egui -- v1.2
+- 3D renderer (wgpu native): buildings from OSM earcut extrusion, SRTM terrain, road surfaces -- v1.2
+- 3D agent rendering with mesh/billboard LOD and orbit camera -- v1.2
+- Streaming calibration with window-change detection and staleness decay -- v1.2
 
 ### Active
 
-## Current Milestone: v1.2 Digital Twin
+## Current Milestone: v1.3 Web Dashboard
 
-**Goal:** Complete the digital twin loop with real-world camera integration for demand calibration and 3D native city visualization with agent rendering.
+**Goal:** Replace egui native renderer with a Tauri-based web dashboard featuring 2D analytics (deck.gl + MapLibre) and 3D city visualization (CesiumJS), backed by a fully self-hosted open-data tile pipeline served via Martin and Docker Compose.
 
 **Target features:**
-- Camera feed ingestion with vehicle/pedestrian detection (YOLO-based)
-- Spatial mapping of camera detection points to simulation network
-- Real-time demand calibration from detection counts
-- 3D city buildings from open data (OSM → glTF) in wgpu renderer
-- 3D terrain rendering (DEM data)
-- 3D agent objects (vehicles, pedestrians) on the city map
-- Self-hosted tile pipeline (no commercial APIs)
+- Tauri app shell wrapping Rust simulation backend with WebView frontend
+- Tauri IPC commands for simulation control (play/pause/step/speed/reset)
+- WebSocket streaming for high-frequency agent position data (10 Hz)
+- 2D analytics view: deck.gl ScatterplotLayer (280K agents), HeatmapLayer, flow arrows on MapLibre base map
+- 3D city view: CesiumJS with self-hosted 3D Tiles buildings, quantized-mesh terrain, agent overlay
+- Tab/toggle button to switch between 2D and 3D views
+- Dashboard panels: KPIs (agent count, avg speed, LOS, frame time), calibration status, speed/demand charts
+- Self-hosted tile pipeline: Martin (Rust) vector tile server, SRTM terrain, OSM building extrusion → 3D Tiles
+- Full Docker Compose infrastructure (Martin, PostGIS, Nginx, TileServer GL)
+- HCMC 5-district tile data generation with reusable add-city pipeline
+- Remove egui and native wgpu renderer entirely
 
 ### Out of Scope
 
@@ -65,19 +77,20 @@ Motorbikes move realistically through traffic using continuous sublane positioni
 
 ## Context
 
-Shipped v1.1 SUMO Replacement Engine with 31,780 Rust LOC + 1,501 WGSL LOC across ~12 crates.
-Tech stack: Rust nightly (2024 edition), wgpu 28 (Metal backend), hecs ECS, petgraph, rstar, egui.
-168 commits over 3 days (2026-03-06 to 2026-03-09).
-45/45 v1.1 requirements satisfied, 11/11 phases verified, 10/10 E2E flows complete.
+Shipped v1.1 SUMO Replacement Engine (31,780 Rust LOC + 1,501 WGSL LOC, 168 commits, 45/45 requirements).
+Shipped v1.2 Digital Twin (20 phases, 17 plans): gRPC camera detection ingestion, intersection sublane model, PMTiles map tiles, full 3D native renderer (buildings, terrain, roads, agent LOD), streaming calibration.
+Current codebase: Rust nightly (2024 edition), wgpu 28 (Metal backend), hecs ECS, petgraph, rstar, egui, tonic gRPC.
 
-Known tech debt: sublane.rs CREEP/GAP constants could be wired to config (values already match defaults). Multi-GPU boundary protocol validated with logical partitions; physical multi-adapter untested.
+v1.3 architectural shift: egui + native wgpu rendering → Tauri + web dashboard. Simulation engine stays in Rust, visualization moves to browser tech stack inside Tauri WebView. Communication via Tauri IPC (commands) + WebSocket (agent streaming).
+
+Known tech debt: sublane.rs CREEP/GAP constants could be wired to config (values already match defaults). Multi-GPU boundary protocol validated with logical partitions; physical multi-adapter untested. Critical performance regression at 8K agents (83.4ms frame time).
 
 ## Constraints
 
 - **Platform**: macOS Apple Silicon (Metal GPU backend via wgpu)
 - **Scale**: 280K agents on 5-district HCMC road network (~25K edges)
 - **Toolchain**: Rust nightly (Edition 2024) -- needs portable_simd, async traits
-- **App framework**: winit + egui (pure Rust, no webview)
+- **App framework**: Tauri 2 (Rust backend + WebView frontend, replacing winit+egui)
 - **Arithmetic**: Fixed-point (Q16.16/Q12.20/Q8.8) for GPU; f64 on CPU reference paths
 - **No external services**: Everything runs locally, no cloud dependencies
 
@@ -92,10 +105,12 @@ Known tech debt: sublane.rs CREEP/GAP constants could be wired to config (values
 | Pathfinding | CCH (custom) | 3ms dynamic weight updates, 0.02ms/query on 25K edges |
 | Prediction | BPR+ETS+historical ensemble | In-process, ArcSwap lock-free overlay |
 | Spatial index | rstar | R-tree for neighbor queries in agent interactions |
-| Window | winit | Cross-platform windowing, proven with wgpu |
-| UI | egui + egui-wgpu | Immediate-mode GUI on same wgpu surface |
-| Rendering | GPU-instanced wgpu 2D | Styled shapes, direction arrows, zoom/pan |
-| Sim control | In-process | Direct function calls from egui |
+| App shell | Tauri 2 | Rust backend + WebView, single binary distribution |
+| Frontend | React + TypeScript | Dashboard UI inside Tauri WebView |
+| 2D viz | deck.gl + MapLibre GL JS | GPU-accelerated 280K agent scatter, heatmaps, flow arrows |
+| 3D viz | CesiumJS (self-hosted, no Ion) | 3D Tiles buildings, quantized-mesh terrain, agent overlay |
+| Tile server | Martin (Rust) | Dynamic vector tiles from PostGIS |
+| Sim control | Tauri IPC + WebSocket | IPC for commands, WebSocket for 10 Hz agent streaming |
 | Config | TOML (vehicle_params.toml) | Per-vehicle-type behavior parameters |
 | Serialization | postcard (graph), bincode (internal) | Fast compact serialization |
 
@@ -117,6 +132,15 @@ Known tech debt: sublane.rs CREEP/GAP constants could be wired to config (values
 | Nightly Rust | Need portable_simd for math performance | Good |
 | ~12 crate workspace with 700-line limit | Clean separation, manageable files | Good |
 | Motorbike sublane: probe-based gap scanning | 0.3m step, obstacle-edge sweep for swarming | Good |
+| gRPC ingestion (not built-in YOLO) | External CV pushes detections to VELOS | Good |
+| New Renderer3D (not retrofit 2D) | Separate render pipeline, independent of existing 2D | Good |
+| OSM building extrusion via earcut | No external 3D datasets for HCMC | Good |
+| Tauri + React replacing winit+egui | Web tech for visualization, Rust for simulation; richer UI | -- Pending |
+| Tauri IPC + WebSocket (not pure IPC) | IPC for low-freq commands, WebSocket for high-freq streaming | -- Pending |
+| CesiumJS for 3D (not MapLibre 3D) | Full 3D globe, 3D Tiles support, terrain; matches docs | -- Pending |
+| Martin for tile serving (not PMTiles) | Dynamic tiles from PostGIS, flexible for dev | -- Pending |
+| Remove egui entirely (not keep as fallback) | Single rendering path, avoid maintaining two UIs | -- Pending |
+| Docker Compose full stack | Martin + PostGIS + Nginx + TileServer GL for self-hosted tiles | -- Pending |
 
 ---
-*Last updated: 2026-03-09 after v1.2 milestone start*
+*Last updated: 2026-03-12 after v1.3 milestone start*

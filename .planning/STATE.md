@@ -1,36 +1,36 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.2
-milestone_name: Digital Twin
-status: completed
-stopped_at: Completed 20-02-PLAN.md -- v1.2 milestone feature-complete
-last_updated: "2026-03-11T13:20:38.446Z"
-last_activity: 2026-03-11 -- Phase 20 Plan 02 complete (streaming calibration human-verified end-to-end)
+milestone: v1.3
+milestone_name: Web Dashboard
+status: active
+stopped_at: ""
+last_updated: "2026-03-12T00:00:00.000Z"
+last_activity: 2026-03-12 -- Milestone v1.3 started
 progress:
-  total_phases: 5
-  completed_phases: 5
-  total_plans: 17
-  completed_plans: 17
-  percent: 100
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-03-09)
+See: .planning/PROJECT.md (updated 2026-03-12)
 
 **Core value:** Motorbikes move realistically through traffic using continuous sublane positioning -- not forced into discrete lanes like Western traffic models
-**Current focus:** v1.2 Digital Twin milestone feature-complete -- all 20 phases delivered
+**Current focus:** v1.3 Web Dashboard -- Tauri + React replacing egui, deck.gl 2D + CesiumJS 3D, self-hosted tiles
 
 ## Current Position
 
-Phase: 20 of 20 (Real-Time Calibration)
-Plan: 2 of 2 in current phase (complete)
-Status: v1.2 Digital Twin milestone feature-complete -- all phases delivered
-Last activity: 2026-03-11 -- Phase 20 Plan 02 complete (streaming calibration human-verified end-to-end)
+Phase: Not started (defining requirements)
+Plan: --
+Status: Defining requirements
+Last activity: 2026-03-12 -- Milestone v1.3 started
 
-Progress: [██████████] 100% (Complete)
+Progress: [░░░░░░░░░░] 0%
 
 ## Accumulated Context
 
